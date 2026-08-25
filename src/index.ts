@@ -1,0 +1,110 @@
+#!/usr/bin/env node
+import { loadConfig, parsePort } from "./config";
+import { createLogger, type Logger } from "./logger";
+import { initTrueForge } from "./trueforge";
+import { startServer } from "./server";
+
+const USAGE = `incident-agent - Incident Command Deck local control plane
+
+Usage:
+  incident-agent serve [--port <number>] [--host <addr>]
+
+Commands:
+  serve               Start the control plane (HTTP + WebSocket) [default]
+
+Options:
+  -p, --port <number> Port to listen on (default 3000, or $PORT)
+  -H, --host <addr>   Host/IP to bind (default 127.0.0.1, or $HOST)
+`;
+
+interface ParsedArgs {
+  command: string;
+  port?: number;
+  host?: string;
+}
+
+function parseArgs(argv: string[]): ParsedArgs {
+  const out: ParsedArgs = { command: "serve" };
+  const help = ["--help", "-h"];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (help.includes(arg)) {
+      console.error(USAGE);
+      process.exit(0);
+    } else if (arg === "--port" || arg === "-p") {
+      const value = argv[++i];
+      if (value === undefined) throw new Error(`missing value for ${arg}`);
+      const port = parsePort(value);
+      if (port === undefined) throw new Error(`invalid port: ${value}`);
+      out.port = port;
+    } else if (arg === "--host" || arg === "-H") {
+      const value = argv[++i];
+      if (value === undefined) throw new Error(`missing value for ${arg}`);
+      out.host = value;
+    } else if (arg.startsWith("-")) {
+      throw new Error(`unknown option: ${arg}`);
+    } else {
+      out.command = arg;
+    }
+  }
+  return out;
+}
+
+async function main(): Promise<void> {
+  let args: ParsedArgs;
+  try {
+    args = parseArgs(process.argv.slice(2));
+  } catch (err) {
+    console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(USAGE);
+    process.exit(1);
+  }
+
+  if (args.command !== "serve") {
+    console.error(`error: unknown command '${args.command}'`);
+    console.error(USAGE);
+    process.exit(1);
+  }
+
+  const config = loadConfig(process.env, { port: args.port, host: args.host });
+  const logger: Logger = createLogger(config.logLevel);
+
+  const tf = initTrueForge(
+    { baseUrl: config.trueforgeBaseUrl, token: config.trueforgeToken },
+    logger,
+  );
+
+  let server;
+  try {
+    server = await startServer({
+      host: config.host,
+      port: config.port,
+      logger,
+      getStatus: () => tf.status,
+    });
+  } catch (err) {
+    logger.error({ event: "start_failed", err }, "failed to start server");
+    process.exit(1);
+  }
+
+  // PR #3 extension point: feed TrueForge session-stream events into the
+  // relay, e.g. for await (const event of tf.client.sessions.createTurnStream(...)) server.broadcast(event)
+
+  let closing = false;
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.on(signal, () => {
+      if (closing) return;
+      closing = true;
+      logger.info({ event: "shutdown", signal }, "shutting down");
+      void server
+        .close()
+        .catch((err: unknown) => logger.error({ event: "shutdown_error", err }, "error during shutdown"))
+        .finally(() => process.exit(0));
+    });
+  }
+}
+
+main().catch((err: unknown) => {
+  console.error(err instanceof Error ? err.stack ?? err.message : err);
+  process.exit(1);
+});
