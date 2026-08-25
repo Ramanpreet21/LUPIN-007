@@ -14,7 +14,7 @@ Commands:
 
 Options:
   -p, --port <number> Port to listen on (default 3000, or $PORT)
-  -H, --host <addr>   Host/IP to bind (default 0.0.0.0, or $HOST)
+  -H, --host <addr>   Host/IP to bind (default 127.0.0.1, or $HOST)
 `;
 
 interface ParsedArgs {
