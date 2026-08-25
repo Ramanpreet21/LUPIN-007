@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
     "serve": "node dist/index.js serve",
     "start": "node dist/index.js serve",
     "dev": "tsx src/index.ts serve",
@@ -21,6 +22,9 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "engines": {
+    "node": ">=22"
+  },
   "type": "commonjs",
   "bugs": {
     "url": "https://github.com/Ramanpreet21/007/issues"

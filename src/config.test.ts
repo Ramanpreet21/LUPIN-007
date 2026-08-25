@@ -11,7 +11,7 @@ function env(entries: Record<string, string>): NodeJS.ProcessEnv {
 test("port/host/logLevel defaults", () => {
   const cfg = loadConfig(emptyEnv);
   assert.equal(cfg.port, 3000);
-  assert.equal(cfg.host, "0.0.0.0");
+  assert.equal(cfg.host, "127.0.0.1");
   assert.equal(cfg.logLevel, "info");
 });
 

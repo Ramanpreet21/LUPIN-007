@@ -12,7 +12,7 @@ export interface CliOptions {
 }
 
 const DEFAULT_PORT = 3000;
-const DEFAULT_HOST = "0.0.0.0";
+const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_LOG_LEVEL = "info";
 
 /** Parse a port string/number. Returns undefined for missing or invalid values. */
