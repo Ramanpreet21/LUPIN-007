@@ -6,6 +6,7 @@ import type { TrueForgeApi } from "@truefoundry/trueforge-sdk";
 type ModelMessageEvent = TrueForgeApi.ModelMessageEvent;
 type ToolApprovalRequiredEvent = TrueForgeApi.ToolApprovalRequiredEvent;
 type ToolCall = TrueForgeApi.ToolCall;
+type ToolCallRef = TrueForgeApi.ToolCallRef;
 type TurnCreatedEvent = TrueForgeApi.TurnCreatedEvent;
 type TurnDoneEvent = TrueForgeApi.TurnDoneEvent;
 type TurnStreamingEvent = TrueForgeApi.TurnStreamingEvent;
@@ -67,8 +68,8 @@ function textContent(content: unknown): string {
  * shell-style tools the payload is `{"command": "..."}`, so unwrap it so the
  * SAFETY_POLICY regexes (anchored to the command start) see the real command.
  */
-function toolCommandString(tool?: ToolCall): string {
-  const fn = tool?.function;
+function toolCommandString(tool?: ToolCall | ToolCallRef): string {
+  const fn = tool && "function" in tool ? tool.function : undefined;
   if (!fn) return "";
   const raw = fn.arguments;
   if (typeof raw === "string") {
@@ -133,7 +134,9 @@ export function createIncidentRouter({
     if (!client) return;
     let step = 0;
     let turnId: string | undefined;
-    let toolCalls: ToolCall[] = [];
+    // Index tool calls by id across messages so an approval gate can resolve
+    // every referenced call, not just the last message's toolCalls list.
+    const toolCallById = new Map<string, ToolCall>();
     try {
       const { data } = await client.sessions.create({
         agent: { name: "incident-responder" },
@@ -155,7 +158,7 @@ export function createIncidentRouter({
           case "model.message": {
             const msg = ev as ModelMessageEvent;
             step += 1;
-            toolCalls = msg.toolCalls ?? toolCalls;
+            for (const tc of msg.toolCalls ?? []) toolCallById.set(tc.id, tc);
             broadcast({
               type: "agent_thinking",
               incident_id: incidentId,
@@ -168,14 +171,14 @@ export function createIncidentRouter({
           }
           case "tool.approval_required": {
             const gate = ev as ToolApprovalRequiredEvent;
-            const ref = gate.toolCalls[0];
-            const tool = toolCalls.find((t) => t.id === ref?.id) ?? toolCalls[0];
-            const command = toolCommandString(tool) || ref?.id || "unknown";
+            const gated = gate.toolCalls.map((r) => toolCallById.get(r.id) ?? r);
+            const command = toolCommandString(gated[0]) || gated[0]?.id || "unknown";
             const badges = computeSafetyBadges(command);
             patchIncident(incidentId, {
               turnId,
               threadId: gate.threadId,
-              toolCallId: ref?.id,
+              toolCallId: gated[0]?.id,
+              toolCallIds: gated.map((t) => t.id),
               proposedCommand: command,
               safetyBadges: badges,
             });
@@ -201,6 +204,14 @@ export function createIncidentRouter({
             break;
         }
       }
+      // The stream ended without a gate or turn.done — report it rather than
+      // leaving the incident stuck in `diagnosing`.
+      setIncidentStatus(incidentId, "failed");
+      broadcast({
+        type: "execution_complete",
+        incident_id: incidentId,
+        payload: { status: "failed" },
+      });
     } catch (err) {
       logger.error(
         { event: "incident_diagnosis_failed", incident_id: incidentId, err },
@@ -237,23 +248,41 @@ export function createIncidentRouter({
     const client = getTf().client;
     if (!client) return;
     try {
-      const approvalInput = {
+      // Resume every tool call that was gated, not just the first one.
+      const toolCallIds = incident.toolCallIds ?? (incident.toolCallId ? [incident.toolCallId] : []);
+      if (toolCallIds.length === 0) return;
+      const threadId = incident.threadId; // narrowed to string by the guard above
+      const approval =
+        decision === "approved"
+          ? ({ status: "allow" } as const)
+          : ({ status: "deny", reason: "rejected by operator" } as const);
+      const approvalInputs = toolCallIds.map((toolCallId) => ({
         type: "user.tool_approval" as const,
-        threadId: incident.threadId,
-        toolCallId: incident.toolCallId,
-        approval:
-          decision === "approved"
-            ? ({ status: "allow" } as const)
-            : ({ status: "deny", reason: "rejected by operator" } as const),
-      };
+        threadId,
+        toolCallId,
+        approval,
+      }));
 
       const stream = await client.sessions.createTurnStream(incident.sessionId, {
         previousTurnId: incident.turnId,
-        input: [approvalInput],
+        input: approvalInputs,
       });
 
       if (decision === "rejected") {
-        await client.sessions.cancel(incident.sessionId);
+        // Cancel the session no matter what so no orphaned tool work continues
+        // after a deny — even if the deny-resume stream itself fails.
+        try {
+          for await (const _ev of stream) {
+            /* drain the deny turn to completion */
+          }
+        } catch (err) {
+          logger.error(
+            { event: "approval_deny_stream_failed", incident_id: incidentId, err },
+            "deny stream failed; cancelling session",
+          );
+        } finally {
+          await client.sessions.cancel(incident.sessionId);
+        }
         setIncidentStatus(incidentId, "rejected");
         broadcast({
           type: "execution_complete",
@@ -265,7 +294,7 @@ export function createIncidentRouter({
 
       let turnId = incident.turnId;
       let outcome: "success" | "failed" = "failed";
-      let toolCalls: ToolCall[] = [];
+      const toolCallById = new Map<string, ToolCall>();
       for await (const ev of stream) {
         switch (ev.type) {
           case "turn.created": {
@@ -273,22 +302,22 @@ export function createIncidentRouter({
             break;
           }
           case "model.message": {
-            toolCalls = (ev as ModelMessageEvent).toolCalls ?? toolCalls;
+            for (const tc of (ev as ModelMessageEvent).toolCalls ?? []) toolCallById.set(tc.id, tc);
             break;
           }
           // A later tool call can need a second approval: persist the new gate
           // and re-enter awaiting_approval so the operator decides again.
           case "tool.approval_required": {
             const gate = ev as ToolApprovalRequiredEvent;
-            const ref = gate.toolCalls[0];
-            const tool = toolCalls.find((t) => t.id === ref?.id) ?? toolCalls[0];
-            const command = toolCommandString(tool) || ref?.id || "unknown";
+            const gated = gate.toolCalls.map((r) => toolCallById.get(r.id) ?? r);
+            const command = toolCommandString(gated[0]) || gated[0]?.id || "unknown";
             const badges = computeSafetyBadges(command);
             patchIncident(incidentId, {
               sessionId: incident.sessionId,
               turnId,
               threadId: gate.threadId,
-              toolCallId: ref?.id,
+              toolCallId: gated[0]?.id,
+              toolCallIds: gated.map((t) => t.id),
               proposedCommand: command,
               safetyBadges: badges,
             });
@@ -319,6 +348,15 @@ export function createIncidentRouter({
         { event: "approval_resume_failed", incident_id: incidentId, decision, err },
         "approval resume failed",
       );
+      // A denied turn must never leave the session running, even if resuming it
+      // failed before the rejected branch's finally could cancel.
+      if (decision === "rejected") {
+        try {
+          await client.sessions.cancel(incident.sessionId);
+        } catch {
+          /* already failing; nothing left to do */
+        }
+      }
       setIncidentStatus(incidentId, "failed");
       broadcast({
         type: "execution_complete",

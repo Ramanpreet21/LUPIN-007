@@ -112,19 +112,43 @@ export interface Incident {
 // In-memory store for PR #3; a durable store is a later PR.
 const incidents = new Map<string, Incident>();
 
-/** Retention for incidents; any entry older than TTL is pruned on each create. */
+const TERMINAL_STATUSES: ReadonlySet<IncidentStatus> = new Set([
+  "completed",
+  "failed",
+  "rejected",
+]);
+
+/** TTL for resolved incidents. */
 const INCIDENT_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * ponytail: hard ceiling on the in-memory store. Past it the oldest entry is
+ * evicted regardless of status; a live session is only orphaned if the map is
+ * at capacity and we must make room (per-session cancellation needs the client
+ * and is out of scope for the demo PR).
+ */
+const INCIDENT_MAX = 1000;
 
 export function createIncident(alert: NormalizedAlert): Incident {
   const now = Date.now();
   for (const [id, incident] of incidents) {
-    // Expire ALL stale incidents, not just terminal ones: an incident left in
-    // awaiting_approval (no operator response) would otherwise be retained
-    // forever and the map would grow without bound. A late operator decision
-    // on a pruned incident simply 404s on the approvals route.
-    if (now - Date.parse(incident.createdAt) > INCIDENT_TTL_MS) {
+    // Expire resolved incidents past TTL; live ones are bounded by INCIDENT_MAX.
+    if (
+      TERMINAL_STATUSES.has(incident.status) &&
+      now - Date.parse(incident.createdAt) > INCIDENT_TTL_MS
+    ) {
       incidents.delete(id);
     }
+  }
+  // Bounded growth: when at capacity, evict the single oldest entry regardless
+  // of status.
+  if (incidents.size >= INCIDENT_MAX) {
+    let oldest: { id: string; ts: number } | null = null;
+    for (const [id, incident] of incidents) {
+      const ts = Date.parse(incident.createdAt);
+      if (oldest === null || ts < oldest.ts) oldest = { id, ts };
+    }
+    if (oldest) incidents.delete(oldest.id);
   }
   const incident: Incident = {
     id: randomUUID(),

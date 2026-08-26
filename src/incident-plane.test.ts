@@ -308,3 +308,70 @@ test("POST /api/approvals → 400 invalid / 404 unknown / 409 not awaiting", asy
     await server.close();
   }
 });
+
+function multiCallGateStream(): TurnStreamingEvent[] {
+  const t0 = new Date().toISOString();
+  return [
+    ev({ type: "turn.created", id: "m0", createdAt: t0, turnId: "turn-1", threadId: "thread-1", previousTurnId: null, state: "running" }),
+    ev({
+      type: "model.message",
+      id: "m1",
+      createdAt: t0,
+      threadId: "thread-1",
+      toolCalls: [
+        { id: "call-a", type: "function", function: { name: "bash", arguments: '{"command":"db2cli status"}' } },
+        { id: "call-b", type: "function", function: { name: "bash", arguments: '{"command":"rm -f /tmp/x"}' } },
+      ],
+    }),
+    ev({
+      type: "tool.approval_required",
+      id: "m2",
+      createdAt: t0,
+      threadId: "thread-1",
+      toolCalls: [
+        { id: "call-a", sourceEventId: "m1" },
+        { id: "call-b", sourceEventId: "m1" },
+      ],
+    }),
+  ];
+}
+
+test("multi-call approval gate resumes every gated tool call", async () => {
+  const fake = makeFakeHandle(multiCallGateStream(), doneStream("done"));
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    const res = await postJson(`http://127.0.0.1:${server.port}/alerts`, alertBody);
+    assert.equal(res.status, 202);
+    const { incident_id } = (await res.json()) as { incident_id: string };
+
+    const pending = await ws.waitFor("pending_approval");
+    assert.equal(pending.incident_id, incident_id);
+    // The operator panel shows the first gated command.
+    assert.equal(pending.payload.proposed_command, "db2cli status");
+
+    const approve = await postJson(
+      `http://127.0.0.1:${server.port}/api/approvals`,
+      JSON.stringify({ incident_id, decision: "approved" }),
+    );
+    assert.equal(approve.status, 200);
+
+    // Every gated call is resumed with its own user.tool_approval allow.
+    assert.equal(fake.resumed.length, 1);
+    const resumeInput = fake.resumed[0].request.input as Array<{
+      toolCallId?: string;
+      approval?: { status?: string };
+    }>;
+    assert.ok(Array.isArray(resumeInput));
+    assert.equal(resumeInput.length, 2);
+    assert.deepEqual(
+      resumeInput.map((i) => i.toolCallId),
+      ["call-a", "call-b"],
+    );
+    assert.equal(resumeInput[0].approval?.status, "allow");
+    assert.equal(resumeInput[1].approval?.status, "allow");
+  } finally {
+    ws.close();
+    await server.close();
+  }
+});

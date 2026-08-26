@@ -82,19 +82,31 @@ test("incident store: create/get/status/patch transitions", () => {
   assert.equal(setIncidentStatus("missing", "completed"), undefined);
 });
 
-test("TTL sweep expires stale non-terminal incidents", () => {
-  const stale = createIncident({
+test("TTL sweep expires resolved incidents only; live ones are retained", () => {
+  const resolved = createIncident({
     service_name: "postgres",
     target_host: "prod-db-01",
     severity: "warning",
   });
-  // Backdate so the next create's sweep treats it as stale.
-  patchIncident(stale.id, {
+  patchIncident(resolved.id, {
     createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
   });
-  setIncidentStatus(stale.id, "awaiting_approval");
+  setIncidentStatus(resolved.id, "completed");
+
+  const live = createIncident({
+    service_name: "mysql",
+    target_host: "db-02",
+    severity: "warning",
+  });
+  // Backdated and awaiting approval: retained, since only the cap evicts it.
+  patchIncident(live.id, {
+    createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+  });
+  setIncidentStatus(live.id, "awaiting_approval");
 
   createIncident({ service_name: "redis", target_host: "cache-01", severity: "warning" });
 
-  assert.equal(getIncident(stale.id), undefined);
+  assert.equal(getIncident(resolved.id), undefined); // terminal + stale → pruned
+  assert.ok(getIncident(live.id)); // awaiting_approval → kept until the cap
 });
+
