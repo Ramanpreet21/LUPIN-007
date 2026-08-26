@@ -44,6 +44,27 @@ test("normalizeAlert rejects non-object payloads", () => {
   assert.equal(normalizeAlert([1]).ok, false);
 });
 
+test("normalizeAlert rejects overlong required identifiers instead of truncating", () => {
+  const longHost = "h".repeat(254); // > 253 cap for target_host
+  const result = normalizeAlert({ service_name: "postgres", target_host: longHost });
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.match(result.details[0], /target_host/);
+  assert.match(result.details[0], /exceeds max length/);
+});
+
+test("normalizeAlert caps free-text summary but never truncates identifiers", () => {
+  const result = normalizeAlert({
+    service_name: "postgres",
+    target_host: "prod-db-01",
+    alert_summary: "x".repeat(600),
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.ok(result.alert.alert_summary);
+  assert.equal(result.alert.alert_summary.length, 500);
+});
+
 test("incident store: create/get/status/patch transitions", () => {
   const result = normalizeAlert({ service_name: "postgres", target_host: "prod-db-01" });
   assert.equal(result.ok, true);
@@ -59,4 +80,21 @@ test("incident store: create/get/status/patch transitions", () => {
 
   assert.equal(getIncident("missing"), undefined);
   assert.equal(setIncidentStatus("missing", "completed"), undefined);
+});
+
+test("TTL sweep expires stale non-terminal incidents", () => {
+  const stale = createIncident({
+    service_name: "postgres",
+    target_host: "prod-db-01",
+    severity: "warning",
+  });
+  // Backdate so the next create's sweep treats it as stale.
+  patchIncident(stale.id, {
+    createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+  });
+  setIncidentStatus(stale.id, "awaiting_approval");
+
+  createIncident({ service_name: "redis", target_host: "cache-01", severity: "warning" });
+
+  assert.equal(getIncident(stale.id), undefined);
 });
