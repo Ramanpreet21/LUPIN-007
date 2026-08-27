@@ -106,6 +106,8 @@ export interface Incident {
   /** First gate tool-call id (kept for display and single-call resume). */
   toolCallId?: string;
   proposedCommand?: string;
+  /** Every gated command, so an incident-level approval maps to what was shown. */
+  proposedCommands?: string[];
   safetyBadges?: SafetyBadge[];
 }
 
@@ -122,14 +124,16 @@ const TERMINAL_STATUSES: ReadonlySet<IncidentStatus> = new Set([
 const INCIDENT_TTL_MS = 60 * 60 * 1000;
 
 /**
- * ponytail: hard ceiling on the in-memory store. Past it the oldest entry is
- * evicted regardless of status; a live session is only orphaned if the map is
- * at capacity and we must make room (per-session cancellation needs the client
- * and is out of scope for the demo PR).
+ * ponytail: hard ceiling on the in-memory store. At capacity we evict resolved
+ * (terminal) incidents first — their TrueForge session is complete or already
+ * cancelled, so evicting them orphans nothing. If every held incident is still
+ * live we refuse new ingestion rather than break an approval in flight or leave
+ * a remote session unreachable (per-session cancellation needs the client and
+ * is wired into the rejection path, not the store).
  */
-const INCIDENT_MAX = 1000;
+export const INCIDENT_MAX = 1000;
 
-export function createIncident(alert: NormalizedAlert): Incident {
+export function createIncident(alert: NormalizedAlert): Incident | undefined {
   const now = Date.now();
   for (const [id, incident] of incidents) {
     // Expire resolved incidents past TTL; live ones are bounded by INCIDENT_MAX.
@@ -140,15 +144,14 @@ export function createIncident(alert: NormalizedAlert): Incident {
       incidents.delete(id);
     }
   }
-  // Bounded growth: when at capacity, evict the single oldest entry regardless
-  // of status.
+  // At capacity, make room with resolved entries first: a terminal incident's
+  // session is done, so dropping it orphans nothing.
   if (incidents.size >= INCIDENT_MAX) {
-    let oldest: { id: string; ts: number } | null = null;
     for (const [id, incident] of incidents) {
-      const ts = Date.parse(incident.createdAt);
-      if (oldest === null || ts < oldest.ts) oldest = { id, ts };
+      if (TERMINAL_STATUSES.has(incident.status)) incidents.delete(id);
     }
-    if (oldest) incidents.delete(oldest.id);
+    // All remaining entries are live → refuse instead of silently orphaning one.
+    if (incidents.size >= INCIDENT_MAX) return undefined;
   }
   const incident: Incident = {
     id: randomUUID(),

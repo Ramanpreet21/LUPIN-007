@@ -37,7 +37,11 @@ export type WsEnvelope =
   | {
       type: "pending_approval";
       incident_id: string;
-      payload: { proposed_command: string; safety_badges: SafetyBadge[] };
+      payload: {
+        proposed_command: string;
+        proposed_commands: string[];
+        safety_badges: SafetyBadge[];
+      };
     }
   | {
       type: "execution_complete";
@@ -89,6 +93,18 @@ export function computeSafetyBadges(command: string): SafetyBadge[] {
   return SAFETY_POLICY.map(({ name, regex }) => ({
     name,
     status: regex.test(command) ? "fail" : "pass",
+  }));
+}
+
+/**
+ * Safety badges for the whole approval gate. A rule fails if ANY gated command
+ * violates it, so one operator decision that authorizes several commands is
+ * shown at the risk of the riskiest one, not just the first.
+ */
+function computeGateBadges(commands: string[]): SafetyBadge[] {
+  return SAFETY_POLICY.map(({ name, regex }) => ({
+    name,
+    status: commands.some((command) => regex.test(command)) ? "fail" : "pass",
   }));
 }
 
@@ -172,21 +188,26 @@ export function createIncidentRouter({
           case "tool.approval_required": {
             const gate = ev as ToolApprovalRequiredEvent;
             const gated = gate.toolCalls.map((r) => toolCallById.get(r.id) ?? r);
-            const command = toolCommandString(gated[0]) || gated[0]?.id || "unknown";
-            const badges = computeSafetyBadges(command);
+            const commands = gated.map((t) => toolCommandString(t) || t.id || "unknown");
+            const badges = computeGateBadges(commands);
             patchIncident(incidentId, {
               turnId,
               threadId: gate.threadId,
               toolCallId: gated[0]?.id,
               toolCallIds: gated.map((t) => t.id),
-              proposedCommand: command,
+              proposedCommand: commands.join("\n"),
+              proposedCommands: commands,
               safetyBadges: badges,
             });
             setIncidentStatus(incidentId, "awaiting_approval");
             broadcast({
               type: "pending_approval",
               incident_id: incidentId,
-              payload: { proposed_command: command, safety_badges: badges },
+              payload: {
+                proposed_command: commands.join("\n"),
+                proposed_commands: commands,
+                safety_badges: badges,
+              },
             });
             return; // halt; the approval route resumes the turn
           }
@@ -310,22 +331,27 @@ export function createIncidentRouter({
           case "tool.approval_required": {
             const gate = ev as ToolApprovalRequiredEvent;
             const gated = gate.toolCalls.map((r) => toolCallById.get(r.id) ?? r);
-            const command = toolCommandString(gated[0]) || gated[0]?.id || "unknown";
-            const badges = computeSafetyBadges(command);
+            const commands = gated.map((t) => toolCommandString(t) || t.id || "unknown");
+            const badges = computeGateBadges(commands);
             patchIncident(incidentId, {
               sessionId: incident.sessionId,
               turnId,
               threadId: gate.threadId,
               toolCallId: gated[0]?.id,
               toolCallIds: gated.map((t) => t.id),
-              proposedCommand: command,
+              proposedCommand: commands.join("\n"),
+              proposedCommands: commands,
               safetyBadges: badges,
             });
             setIncidentStatus(incidentId, "awaiting_approval");
             broadcast({
               type: "pending_approval",
               incident_id: incidentId,
-              payload: { proposed_command: command, safety_badges: badges },
+              payload: {
+                proposed_command: commands.join("\n"),
+                proposed_commands: commands,
+                safety_badges: badges,
+              },
             });
             return;
           }
@@ -378,6 +404,10 @@ export function createIncidentRouter({
       return;
     }
     const incident = createIncident(parsed.alert);
+    if (!incident) {
+      res.status(503).json({ error: "incident_store_full" });
+      return;
+    }
     broadcast({
       type: "incident_created",
       incident_id: incident.id,

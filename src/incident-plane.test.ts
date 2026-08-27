@@ -320,7 +320,7 @@ function multiCallGateStream(): TurnStreamingEvent[] {
       threadId: "thread-1",
       toolCalls: [
         { id: "call-a", type: "function", function: { name: "bash", arguments: '{"command":"db2cli status"}' } },
-        { id: "call-b", type: "function", function: { name: "bash", arguments: '{"command":"rm -f /tmp/x"}' } },
+        { id: "call-b", type: "function", function: { name: "bash", arguments: '{"command":"rm -rf /tmp/*"}' } },
       ],
     }),
     ev({
@@ -347,8 +347,14 @@ test("multi-call approval gate resumes every gated tool call", async () => {
 
     const pending = await ws.waitFor("pending_approval");
     assert.equal(pending.incident_id, incident_id);
-    // The operator panel shows the first gated command.
-    assert.equal(pending.payload.proposed_command, "db2cli status");
+    // The operator panel discloses EVERY gated command, not just the first.
+    const proposed = pending.payload.proposed_command as string;
+    assert.ok(proposed.includes("db2cli status"));
+    assert.ok(proposed.includes("rm -rf /tmp/*"));
+    assert.deepEqual(pending.payload.proposed_commands, ["db2cli status", "rm -rf /tmp/*"]);
+    // Safety badges cover the whole gate: the hidden `rm -rf` flags destructive.
+    const badges = pending.payload.safety_badges as Array<{ name: string; status: string }>;
+    assert.equal(badges.find((b) => b.name === "destructive")?.status, "fail");
 
     const approve = await postJson(
       `http://127.0.0.1:${server.port}/api/approvals`,

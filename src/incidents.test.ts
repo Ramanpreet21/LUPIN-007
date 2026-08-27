@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   createIncident,
   getIncident,
+  INCIDENT_MAX,
   normalizeAlert,
   patchIncident,
   setIncidentStatus,
@@ -70,6 +71,8 @@ test("incident store: create/get/status/patch transitions", () => {
   assert.equal(result.ok, true);
   if (!result.ok) return;
   const incident = createIncident(result.alert);
+
+  assert.ok(incident); // store not at cap yet — creation must not have been refused
   assert.equal(getIncident(incident.id)?.status, "diagnosing");
 
   setIncidentStatus(incident.id, "awaiting_approval");
@@ -88,6 +91,7 @@ test("TTL sweep expires resolved incidents only; live ones are retained", () => 
     target_host: "prod-db-01",
     severity: "warning",
   });
+  assert.ok(resolved);
   patchIncident(resolved.id, {
     createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
   });
@@ -98,6 +102,7 @@ test("TTL sweep expires resolved incidents only; live ones are retained", () => 
     target_host: "db-02",
     severity: "warning",
   });
+  assert.ok(live);
   // Backdated and awaiting approval: retained, since only the cap evicts it.
   patchIncident(live.id, {
     createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
@@ -108,5 +113,28 @@ test("TTL sweep expires resolved incidents only; live ones are retained", () => 
 
   assert.equal(getIncident(resolved.id), undefined); // terminal + stale → pruned
   assert.ok(getIncident(live.id)); // awaiting_approval → kept until the cap
+});
+
+// Keep this test last: it fills the in-memory store to INCIDENT_MAX.
+test("cap eviction refuses rather than evicting a live incident", () => {
+  // Fill the store with live incidents; at the cap, creation is refused instead
+  // of silently orphaning a live TrueForge session.
+  const liveIds: string[] = [];
+  while (true) {
+    const incident = createIncident({
+      service_name: "svc",
+      target_host: `host-${liveIds.length}`,
+      severity: "warning",
+    });
+    if (!incident) break; // refused → every held incident is live
+    setIncidentStatus(incident.id, "awaiting_approval");
+    liveIds.push(incident.id);
+    // Tripwire: if cap logic ever silently evicts a live entry, this fails.
+    assert.ok(liveIds.length <= INCIDENT_MAX);
+  }
+  assert.ok(liveIds.length > 0);
+  assert.ok(liveIds.length <= INCIDENT_MAX);
+  // No live incident was evicted to make room for later ones.
+  assert.ok(liveIds.every((id) => getIncident(id)));
 });
 
