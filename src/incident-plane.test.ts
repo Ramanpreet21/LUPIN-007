@@ -4,7 +4,7 @@ import { WebSocket } from "ws";
 import { createLogger } from "./logger";
 import { startServer } from "./server";
 import type { TrueForgeHandle } from "./trueforge";
-import { createIncidentRouter } from "./incident-plane";
+import { computeSafetyBadges, createIncidentRouter } from "./incident-plane";
 import type { TrueForgeApi } from "@truefoundry/trueforge-sdk";
 
 type TurnStreamingEvent = TrueForgeApi.TurnStreamingEvent;
@@ -413,6 +413,43 @@ test("destructive badge stays pass when the risky text is only a quoted argument
   } finally {
     ws.close();
     await server.close();
+  }
+});
+
+test("safety badges resolve env-assignment and wrapper prefixes to the real command", () => {
+  // Start-anchored regexes must see the effective executable, not the prefix:
+  // FOO=bar rm …, sudo env sh -c …, etc. must all fail the destructive rule.
+  const cases: Array<{ command: string; expect: Array<[string, "pass" | "fail"]> }> = [
+    { command: "FOO=bar rm -rf /tmp/*", expect: [["destructive", "fail"]] },
+    { command: "rm -rf /tmp/*", expect: [["destructive", "fail"]] },
+    { command: "sudo rm -rf /tmp/*", expect: [["destructive", "fail"], ["privilege-escalation", "fail"]] },
+    { command: "sudo bash -c 'rm -rf /tmp/*'", expect: [["destructive", "fail"]] },
+    { command: "env sh -c 'rm -rf /tmp/*'", expect: [["destructive", "fail"]] },
+    { command: "sudo -u root rm -rf /tmp/*", expect: [["destructive", "fail"]] },
+    { command: "AB=1 sudo -u root env X=2 bash -c 'rm -rf /tmp/*'", expect: [["destructive", "fail"]] },
+    { command: "sudo chmod +777 /data/app", expect: [["privilege-escalation", "fail"]] },
+    { command: "export PATH=/usr/bin rm -rf /tmp/*", expect: [["destructive", "fail"]] },
+  ];
+  for (const { command, expect } of cases) {
+    const badges = computeSafetyBadges(command);
+    for (const [name, status] of expect) {
+      assert.equal(badges.find((b) => b.name === name)?.status, status, `${command} → ${name}`);
+    }
+  }
+});
+
+test("safety badges do not flag rm that is only an argument, not the executable", () => {
+  // The conservative peel must not turn quoted/argument text into a false fail.
+  const cases = [
+    "printf 'note; rm -rf /tmp/*'",
+    "FOO=bar echo rm -rf /tmp/*",
+  ];
+  for (const command of cases) {
+    assert.equal(
+      computeSafetyBadges(command).find((b) => b.name === "destructive")?.status,
+      "pass",
+      command,
+    );
   }
 });
 
