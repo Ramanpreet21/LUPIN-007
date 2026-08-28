@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import express, { type NextFunction, type Request, type Response } from "express";
+import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { WebSocket, WebSocketServer, type Server as WSServer } from "ws";
 import type { Logger } from "./logger";
 import type { TrueForgeStatus } from "./trueforge";
@@ -13,6 +13,11 @@ export interface ServerOptions {
   getStatus: () => TrueForgeStatus;
   /** WebSocket upgrade path. Defaults to /ws. */
   wsPath?: string;
+  /**
+   * Mount additional app routes (e.g. /alerts, /api/approvals) ahead of the
+   * JSON 404 handler. Receives the broadcast relay for WebSocket events.
+   */
+  registerRoutes?: (app: Express, deps: { broadcast: (message: unknown) => void }) => void;
 }
 
 export interface ServerHandle {
@@ -32,6 +37,16 @@ export function startServer(opts: ServerOptions): Promise<ServerHandle> {
   app.disable("x-powered-by");
   app.use(express.json());
 
+  const wss = new WebSocketServer({ noServer: true });
+  const broadcast = (message: unknown): void => {
+    const data = JSON.stringify(message);
+    for (const client of wss.clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(data);
+      }
+    }
+  };
+
   app.get("/health", (_req: Request, res: Response) => {
     const status = getStatus();
     res.json({
@@ -42,16 +57,27 @@ export function startServer(opts: ServerOptions): Promise<ServerHandle> {
     });
   });
 
+  opts.registerRoutes?.(app, { broadcast });
+
   app.use((_req: Request, res: Response) => {
     res.status(404).json({ error: "not_found" });
   });
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+    // Malformed JSON is a client error, not a server failure. Body-parser tags
+    // syntax errors with type "entity.parse.failed" and a 400 status; the generic
+    // 500 handler below must not misreport them as internal_error.
+    if (
+      err instanceof SyntaxError &&
+      (err as { type?: unknown }).type === "entity.parse.failed"
+    ) {
+      res.status(400).json({ error: "invalid_json" });
+      return;
+    }
     logger.error({ event: "http_error", err }, "unhandled request error");
     res.status(500).json({ error: "internal_error" });
   });
 
   const httpServer = createServer(app);
-  const wss = new WebSocketServer({ noServer: true });
 
   httpServer.on("upgrade", (req, socket, head) => {
     let pathname = "/";
@@ -69,15 +95,6 @@ export function startServer(opts: ServerOptions): Promise<ServerHandle> {
       wss.emit("connection", ws, req);
     });
   });
-
-  const broadcast = (message: unknown): void => {
-    const data = JSON.stringify(message);
-    for (const client of wss.clients) {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(data);
-      }
-    }
-  };
 
   return new Promise<ServerHandle>((resolve, reject) => {
     const onError = (err: Error): void => {

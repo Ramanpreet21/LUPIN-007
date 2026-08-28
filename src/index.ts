@@ -3,6 +3,7 @@ import { loadConfig, parsePort } from "./config";
 import { createLogger, type Logger } from "./logger";
 import { initTrueForge } from "./trueforge";
 import { startServer } from "./server";
+import { createIncidentRouter } from "./incident-plane";
 
 const USAGE = `incident-agent - Incident Command Deck local control plane
 
@@ -81,14 +82,14 @@ async function main(): Promise<void> {
       port: config.port,
       logger,
       getStatus: () => tf.status,
+      registerRoutes: (app, { broadcast }) => {
+        app.use(createIncidentRouter({ getTf: () => tf, logger, broadcast }));
+      },
     });
   } catch (err) {
     logger.error({ event: "start_failed", err }, "failed to start server");
     process.exit(1);
   }
-
-  // PR #3 extension point: feed TrueForge session-stream events into the
-  // relay, e.g. for await (const event of tf.client.sessions.createTurnStream(...)) server.broadcast(event)
 
   let closing = false;
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
