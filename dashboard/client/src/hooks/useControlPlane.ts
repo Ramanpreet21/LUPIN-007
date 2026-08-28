@@ -66,7 +66,7 @@ function terminalChunkFor(event: ControlPlaneEvent): string {
       return `\r\n${stamp} ${ansi.mint}${event.incident_id}${ansi.reset} · step ${event.payload.step}\r\n${content}\r\n`;
     }
     case "pending_approval": {
-      const commands = (event.payload.proposed_commands ?? []).join(" && ");
+      const commands = (Array.isArray(event.payload.proposed_commands) ? event.payload.proposed_commands : []).join(" && ");
       return `\r\n${stamp} ${ansi.amber}[APPROVAL REQUIRED]${ansi.reset} ${event.incident_id}\r\n  ${commands}\r\n`;
     }
     case "execution_complete": {
