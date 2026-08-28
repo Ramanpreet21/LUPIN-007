@@ -172,10 +172,16 @@ test("normalizeWebhooks strips IPv6 host:port instances", () => {
   assert.equal(parsed.alert.target_host, "2001:db8::1");
 });
 
-test("normalizeWebhooks maps PagerDuty events-v2 payloads", () => {
+test("normalizeWebhooks maps standard PagerDuty events-v2 payloads via payload.component", () => {
+  // Events API v2 carries no top-level `service`; service_name must come from
+  // the standard payload.component / payload.group fallback or be rejected.
   const results = normalizeWebhooks({
-    payload: { source: "db-02.internal", severity: "error", summary: "Postgres down" },
-    service: { name: "postgres", summary: "Postgres cluster" },
+    payload: {
+      source: "db-02.internal",
+      severity: "error",
+      summary: "Postgres down",
+      component: "postgres",
+    },
   });
   const parsed = results[0];
   assert.equal(parsed.ok, true);
@@ -184,6 +190,32 @@ test("normalizeWebhooks maps PagerDuty events-v2 payloads", () => {
   assert.equal(parsed.alert.target_host, "db-02.internal");
   assert.equal(parsed.alert.severity, "error");
   assert.equal(parsed.alert.alert_summary, "Postgres down");
+});
+
+test("normalizeWebhooks prefers a legacy top-level PagerDuty service object over payload.component", () => {
+  const results = normalizeWebhooks({
+    payload: {
+      source: "db-02.internal",
+      severity: "error",
+      summary: "Postgres down",
+      component: "other-svc",
+    },
+    service: { name: "postgres", summary: "Postgres cluster" },
+  });
+  const parsed = results[0];
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.alert.service_name, "postgres");
+});
+
+test("normalizeWebhooks falls back to payload.group when component is absent", () => {
+  const results = normalizeWebhooks({
+    payload: { source: "db-02.internal", severity: "error", summary: "Postgres down", group: "pg-prod" },
+  });
+  const parsed = results[0];
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.alert.service_name, "pg-prod");
 });
 
 test("normalizeWebhooks maps PagerDuty incident webhooks via custom_details.host", () => {

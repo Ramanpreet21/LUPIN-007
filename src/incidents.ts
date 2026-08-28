@@ -135,7 +135,11 @@ function fromPagerDuty(raw: unknown): Record<string, unknown> | null {
     const service = asRecord(body.service);
     return {
       target_host: pickString(payload, "source"),
-      service_name: pickString(service, "name", "summary"),
+      // Standard Events API v2 carries no top-level `service` object; component /
+      // group under `payload` are the standard service-name proxies. A legacy
+      // top-level `service` object still wins when one is present.
+      service_name:
+        pickString(service, "name", "summary") ?? pickString(payload, "component", "group"),
       severity: payload.severity,
       ...(typeof payload.summary === "string" ? { alert_summary: payload.summary } : {}),
     };
