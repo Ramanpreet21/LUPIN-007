@@ -20,7 +20,9 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } fr
 import { mockAgentStatus } from "@/data/mockAgentStatus";
 import { mockHealthData } from "@/data/mockHealthData";
 import { mockBlastRadiusData, mockIncidentContext, mockSandboxTwinData, mockTopologyData, workspaceCardDefinitions } from "@/data/mockWorkspaceCards";
-import { useMockTerminalStream } from "@/hooks/useMockTerminalStream";
+import { IncidentDeck } from "@/components/IncidentDeck";
+import { useControlPlane } from "@/hooks/useControlPlane";
+import { useControlPlaneTerminalStream } from "@/hooks/useControlPlaneTerminalStream";
 import type { ApprovalMode, SSHStatus } from "@/types/agent-status";
 import type { HealthStatus } from "@/types/health";
 import { systemViewPaths, type SystemViewId } from "@/types/system-views";
@@ -161,7 +163,8 @@ export default function Home() {
   const [sshStatus, setSshStatus] = useState<SSHStatus>(() => storedSetup?.launchMode === "LIVE_HOST" ? "DISCONNECTED" : mockAgentStatus.session.sshStatus);
   const [activeTarget, setActiveTarget] = useState(() => ({ host: storedSetup?.ssh.targetHost ?? mockAgentStatus.session.hostname, port: storedSetup?.ssh.sshPort ?? 22 }));
   const [activeAgentSkillId, setActiveAgentSkillId] = useState<string | null>(mockAgentStatus.activeSkillId ?? null);
-  const terminalStream = useMockTerminalStream();
+  const controlPlane = useControlPlane();
+  const terminalStream = useControlPlaneTerminalStream(controlPlane);
   const workspaceRef = useRef<HTMLElement>(null);
   const conversationViewportRef = useRef<HTMLDivElement>(null);
   const [workspaceClip, setWorkspaceClip] = useState<WorkspaceClip | null>(null);
@@ -360,6 +363,7 @@ export default function Home() {
           </section>
 
           <section className="side-modules" aria-label="Workspace insights">
+            <IncidentDeck plane={controlPlane} />
             <LiveTerminal stream={terminalStream} />
 
             <HealthSummaryCard data={mockHealthData.HEALTHY} />
