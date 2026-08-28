@@ -194,6 +194,24 @@ test("POST /alerts returns 400 on a malformed alert", async () => {
   }
 });
 
+test("POST /alerts returns 400 invalid_json on a syntactically broken body", async () => {
+  const fake = makeFakeHandle([], []);
+  const server = await withServer(fake.handle);
+  try {
+    // Unclosed brace: body-parser throws SyntaxError (entity.parse.failed); the
+    // mounted incident route must surface a client 400, not a 500 internal error.
+    const res = await postJson(
+      `http://127.0.0.1:${server.port}/alerts`,
+      '{"service_name": "postgres"',
+    );
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error: string };
+    assert.equal(body.error, "invalid_json");
+  } finally {
+    await server.close();
+  }
+});
+
 test("POST /alerts acknowledges a fully-resolved AlertManager group without creating incidents", async () => {
   const fake = makeFakeHandle([], []);
   const server = await withServer(fake.handle);

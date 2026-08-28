@@ -63,6 +63,16 @@ export function startServer(opts: ServerOptions): Promise<ServerHandle> {
     res.status(404).json({ error: "not_found" });
   });
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+    // Malformed JSON is a client error, not a server failure. Body-parser tags
+    // syntax errors with type "entity.parse.failed" and a 400 status; the generic
+    // 500 handler below must not misreport them as internal_error.
+    if (
+      err instanceof SyntaxError &&
+      (err as { type?: unknown }).type === "entity.parse.failed"
+    ) {
+      res.status(400).json({ error: "invalid_json" });
+      return;
+    }
     logger.error({ event: "http_error", err }, "unhandled request error");
     res.status(500).json({ error: "internal_error" });
   });
