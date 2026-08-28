@@ -479,10 +479,18 @@ export function createIncidentRouter({
     const results = normalizeWebhooks(req.body);
     const incidentIds: string[] = [];
     let skipped = 0;
+    let resolved = 0;
     let refused = 0;
     let firstError: { error: string; details: string[] } | undefined;
     for (const parsed of results) {
       if (!parsed.ok) {
+        if (parsed.resolved) {
+          // A resolved AlertManager notification: acknowledge it but create
+          // nothing — re-diagnosing a resolved alert would launch remediation
+          // for an event that is already over.
+          resolved += 1;
+          continue;
+        }
         skipped += 1;
         if (!firstError) firstError = parsed;
         continue;
@@ -509,6 +517,16 @@ export function createIncidentRouter({
         res.status(503).json({ error: "incident_store_full", refused });
         return;
       }
+      if (resolved > 0) {
+        // A fully-resolved (or mixed, all-resolved-skipped) notification group:
+        // valid input, nothing actionable — acknowledge rather than error.
+        res.status(202).json({
+          status: "acknowledged",
+          resolved,
+          ...(skipped > 0 ? { skipped } : {}),
+        });
+        return;
+      }
       res.status(400).json({ error: firstError?.error, details: firstError?.details });
       return;
     }
@@ -518,6 +536,7 @@ export function createIncidentRouter({
       incident_ids: incidentIds,
       ...(skipped > 0 ? { skipped } : {}),
       ...(refused > 0 ? { refused } : {}),
+      ...(resolved > 0 ? { resolved } : {}),
     });
   });
 

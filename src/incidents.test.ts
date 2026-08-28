@@ -157,9 +157,63 @@ test("normalizeWebhooks flags malformed AlertManager batch members", () => {
     ],
   });
   assert.equal(results.length, 2);
-  assert.equal(results[0].ok, false);
-  if (!results[0].ok) assert.match(results[0].details[0], /not an object/);
+  const malformed = results[0];
+  assert.equal(malformed.ok, false);
+  if (malformed.ok || malformed.resolved) return;
+  assert.match(malformed.details[0], /not an object/);
   assert.equal(results[1].ok, true);
+});
+
+test("normalizeWebhooks tags resolved AlertManager alerts as resolved, not active", () => {
+  const results = normalizeWebhooks({
+    alerts: [
+      {
+        status: "resolved",
+        labels: { alertname: "HighCPU", instance: "prod-db-01:9100", severity: "critical" },
+        annotations: { summary: "prod-db-01 CPU back under 80%", description: "full description" },
+      },
+    ],
+  });
+  assert.equal(results.length, 1);
+  const parsed = results[0];
+  assert.equal(parsed.ok, false);
+  if (parsed.ok) return;
+  assert.equal(parsed.resolved, true);
+});
+
+test("normalizeWebhooks treats a resolved group notification as a no-op for every member", () => {
+  const results = normalizeWebhooks({
+    status: "resolved",
+    alerts: [
+      { labels: { alertname: "HighCPU", instance: "prod-db-01:9100", severity: "critical" } },
+      { labels: { alertname: "LowDisk", instance: "db-02", severity: "warning" } },
+    ],
+  });
+  assert.equal(results.length, 2);
+  for (const parsed of results) {
+    assert.equal(parsed.ok, false);
+    if (parsed.ok) return;
+    assert.equal(parsed.resolved, true);
+  }
+});
+
+test("normalizeWebhooks keeps a mixed batch: only firing alerts become incidents", () => {
+  const results = normalizeWebhooks({
+    alerts: [
+      { labels: { alertname: "HighCPU", instance: "prod-db-01:9100", severity: "critical" } },
+      {
+        status: "resolved",
+        labels: { alertname: "HighCPU", instance: "prod-db-01:9100", severity: "critical" },
+      },
+    ],
+  });
+  assert.equal(results.length, 2);
+  const [firing, cleared] = results;
+  assert.equal(firing.ok, true);
+  if (firing.ok) assert.equal(firing.alert.target_host, "prod-db-01");
+  assert.equal(cleared.ok, false);
+  if (cleared.ok) return;
+  assert.equal(cleared.resolved, true);
 });
 
 test("normalizeWebhooks strips IPv6 host:port instances", () => {

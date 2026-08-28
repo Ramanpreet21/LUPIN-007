@@ -9,7 +9,7 @@ export interface NormalizedAlert {
 
 export type AlertParseResult =
   | { ok: true; alert: NormalizedAlert }
-  | { ok: false; error: string; details: string[] };
+  | { ok: false; error: string; details: string[]; resolved?: boolean };
 
 const REQUIRED_ALERT_FIELDS = ["service_name", "target_host"] as const;
 
@@ -100,8 +100,20 @@ function stripInstancePort(instance: unknown): unknown {
   return instance.replace(/^([^:]+):\d+$/, "$1");
 }
 
-/** Prometheus AlertManager webhook → one canonical alert per entry. */
-function fromAlertManager(raw: unknown): Array<Record<string, unknown> | null> | null {
+/** Prometheus AlertManager webhook → one entry per alert. Firing alerts carry
+ * the canonical shape; resolved notifications carry {status:"resolved"} so the
+ * caller skips incident creation; malformed members are null. The per-alert
+ * `status` wins, with the group-level status as fallback — a resolved group is
+ * never re-diagnosed as a fresh incident. */
+function fromAlertManager(
+  raw: unknown,
+):
+  | Array<
+      | { status: "firing"; alert: Record<string, unknown> }
+      | { status: "resolved" }
+      | null
+    >
+  | null {
   const body = asRecord(raw);
   if (!body || !Array.isArray(body.alerts) || body.alerts.length === 0) return null;
   // One entry per supplied alert — null for a malformed member — so the
@@ -109,6 +121,9 @@ function fromAlertManager(raw: unknown): Array<Record<string, unknown> | null> |
   return body.alerts.map((alertRaw) => {
     const alert = asRecord(alertRaw);
     if (!alert) return null;
+    if (alert.status === "resolved" || body.status === "resolved") {
+      return { status: "resolved" };
+    }
     const labels = asRecord(alert.labels) ?? {};
     const annotations = asRecord(alert.annotations) ?? {};
     const summary =
@@ -118,10 +133,13 @@ function fromAlertManager(raw: unknown): Array<Record<string, unknown> | null> |
           ? annotations.description
           : undefined;
     return {
-      target_host: stripInstancePort(pickString(labels, "instance")),
-      service_name: pickString(labels, "service", "alertname"),
-      severity: labels.severity,
-      ...(typeof summary === "string" ? { alert_summary: summary } : {}),
+      status: "firing",
+      alert: {
+        target_host: stripInstancePort(pickString(labels, "instance")),
+        service_name: pickString(labels, "service", "alertname"),
+        severity: labels.severity,
+        ...(typeof summary === "string" ? { alert_summary: summary } : {}),
+      },
     };
   });
 }
@@ -177,11 +195,19 @@ export function normalizeWebhooks(raw: unknown): AlertParseResult[] {
   }
   const am = fromAlertManager(raw);
   if (am) {
-    return am.map((m) =>
-      m
-        ? normalizeAlert(m)
-        : { ok: false, error: "invalid_alert", details: ["AlertManager batch entry is not an object"] },
-    );
+    return am.map((entry) => {
+      if (!entry) {
+        return {
+          ok: false,
+          error: "invalid_alert",
+          details: ["AlertManager batch entry is not an object"],
+        };
+      }
+      if (entry.status === "resolved") {
+        return { ok: false, error: "resolved_alert", details: [], resolved: true };
+      }
+      return normalizeAlert(entry.alert);
+    });
   }
   const pager = fromPagerDuty(raw);
   if (pager) return [normalizeAlert(pager)];

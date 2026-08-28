@@ -194,6 +194,68 @@ test("POST /alerts returns 400 on a malformed alert", async () => {
   }
 });
 
+test("POST /alerts acknowledges a fully-resolved AlertManager group without creating incidents", async () => {
+  const fake = makeFakeHandle([], []);
+  const server = await withServer(fake.handle);
+  try {
+    const res = await postJson(
+      `http://127.0.0.1:${server.port}/alerts`,
+      JSON.stringify({
+        status: "resolved",
+        alerts: [
+          {
+            status: "resolved",
+            labels: { alertname: "HighCPU", instance: "prod-db-01:9100", severity: "critical" },
+            annotations: { summary: "prod-db-01 CPU back under 80%" },
+          },
+        ],
+      }),
+    );
+    assert.equal(res.status, 202);
+    const body = (await res.json()) as {
+      status: string;
+      resolved: number;
+      incident_ids?: string[];
+    };
+    // A resolved notification must not spawn diagnosis: acknowledge, create nothing.
+    assert.equal(body.status, "acknowledged");
+    assert.equal(body.resolved, 1);
+    assert.equal(body.incident_ids, undefined);
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /alerts accepts firing entries and reports resolved ones in mixed batches", async () => {
+  const fake = makeFakeHandle([], []);
+  const server = await withServer(fake.handle);
+  try {
+    const res = await postJson(
+      `http://127.0.0.1:${server.port}/alerts`,
+      JSON.stringify({
+        alerts: [
+          { labels: { alertname: "HighCPU", instance: "prod-db-01:9100", severity: "critical" } },
+          {
+            status: "resolved",
+            labels: { alertname: "HighCPU", instance: "prod-db-01:9100", severity: "critical" },
+          },
+        ],
+      }),
+    );
+    assert.equal(res.status, 202);
+    const body = (await res.json()) as {
+      status: string;
+      incident_ids: string[];
+      resolved: number;
+    };
+    assert.equal(body.status, "accepted");
+    assert.equal(body.incident_ids.length, 1);
+    assert.equal(body.resolved, 1);
+  } finally {
+    await server.close();
+  }
+});
+
 test("alert → reasoning → approval gate → approve → execution_complete success", async () => {
   const fake = makeFakeHandle(diagnosisGateStream(), doneStream("done"));
   const server = await withServer(fake.handle);
