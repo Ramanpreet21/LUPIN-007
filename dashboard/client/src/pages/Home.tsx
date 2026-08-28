@@ -23,7 +23,8 @@ import { mockBlastRadiusData, mockIncidentContext, mockSandboxTwinData, mockTopo
 import { IncidentDeck } from "@/components/IncidentDeck";
 import { useControlPlane } from "@/hooks/useControlPlane";
 import { useControlPlaneTerminalStream } from "@/hooks/useControlPlaneTerminalStream";
-import type { ApprovalMode, SSHStatus } from "@/types/agent-status";
+import type { AgentStatusSummary, ApprovalMode, SSHStatus } from "@/types/agent-status";
+import type { ControlPlaneConnectionStatus } from "@/types/control-plane";
 import type { HealthStatus } from "@/types/health";
 import { systemViewPaths, type SystemViewId } from "@/types/system-views";
 import type { ArchiveWorkspaceCardId } from "@/types/workspace-cards";
@@ -63,6 +64,13 @@ import {
 type SettingsSection = "general" | "keys" | "mcp" | "skills";
 type ConversationMessage = { id: string; role: "assistant" | "user" | "system"; label: string; time: string; content: string };
 type BackendPopup = { id: string; source: string; title: string; detail: string; priority: "attention" | "routine" };
+
+const transportToSshStatus: Record<ControlPlaneConnectionStatus, SSHStatus> = {
+  CONNECTING: "RECONNECTING",
+  CONNECTED: "CONNECTED",
+  DISCONNECTED: "DISCONNECTED",
+  ERROR: "DISCONNECTED",
+};
 
 type WorkspaceClip = {
   path: string;
@@ -211,7 +219,18 @@ export default function Home() {
     ? ({ "--cutout-depth": `${workspaceClip.notchHeight}px` } as CSSProperties)
     : undefined;
 
-  const agentStatusData = useMemo(() => ({ ...mockAgentStatus, session: { ...mockAgentStatus.session, hostname: activeTarget.host, targetIp: `SSH · ${activeTarget.port}`, sshStatus }, activeSkillId: activeAgentSkillId, safety: { ...mockAgentStatus.safety, approvalMode, isExecuting: mockAgentStatus.safety.isExecuting && !agentStopped } }), [activeAgentSkillId, activeTarget, agentStopped, approvalMode, sshStatus]);
+  const agentStatusData = useMemo<AgentStatusSummary>(
+    () => ({
+      ...mockAgentStatus,
+      session: { ...mockAgentStatus.session, hostname: activeTarget.host, targetIp: `SSH · ${activeTarget.port}`, sshStatus: transportToSshStatus[controlPlane.status], latencyMs: controlPlane.status === "CONNECTED" ? mockAgentStatus.session.latencyMs : 0 },
+      engine: { ...mockAgentStatus.engine, socketConnected: controlPlane.status === "CONNECTED" },
+      activeSkillId: activeAgentSkillId,
+      skills: mockAgentStatus.skills.map((skill) => ({ ...skill, status: controlPlane.isExecuting && skill.id === activeAgentSkillId ? "EXECUTING" : "READY" })),
+      safety: { ...mockAgentStatus.safety, approvalMode, isExecuting: controlPlane.isExecuting && !agentStopped },
+      policy: { ...mockAgentStatus.policy, blockedCommandCount: controlPlane.blockedExecutionCount },
+    }),
+    [activeAgentSkillId, activeTarget, agentStopped, approvalMode, controlPlane.status, controlPlane.isExecuting, controlPlane.blockedExecutionCount],
+  );
   const handleSshAction = (action: "RECONNECT" | "CLEAR_SCROLLBACK" | "SPAWN_SUBSHELL") => { if (action === "RECONNECT") { setSshStatus("RECONNECTING"); window.setTimeout(() => setSshStatus("CONNECTED"), 750); } };
   const addSshConnection = () => setSshConnections((current) => [...current, { id: `node-${current.length + 1}`, hostname: `node-${current.length + 1}.lan`, address: "SSH · 22", status: "DRAFT", latency: "—" }]);
   const toggleMcpConnection = (id: string) => setMcpConnections((current) => current.map((connection) => connection.id === id ? { ...connection, status: connection.status === "CONNECTED" ? "PAUSED" : "CONNECTED" } : connection));

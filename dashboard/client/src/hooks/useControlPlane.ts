@@ -88,6 +88,10 @@ export interface UseControlPlaneReturn {
   terminalChunk: string;
   /** Monotonic count of transcript characters appended so far (never decreases). */
   terminalCursor: number;
+  /** True while the plane is working an incident (live executing signal). */
+  isExecuting: boolean;
+  /** Executions rejected or failed this session (live policy-block proxy). */
+  blockedExecutionCount: number;
   /** POST an operator decision to /api/approvals; rejects on non-2xx. */
   approve: (incidentId: string) => Promise<void>;
   reject: (incidentId: string) => Promise<void>;
@@ -251,11 +255,15 @@ export function useControlPlane(): UseControlPlaneReturn {
     [],
   );
 
+  const isExecuting = incidents.some((row) => row.status === "diagnosing");
+  const blockedExecutionCount = incidents.filter((row) => row.status === "rejected" || row.status === "failed").length;
   return {
     status,
     incidents,
     terminalChunk,
     terminalCursor: terminalCursorRef.current,
+    isExecuting,
+    blockedExecutionCount,
     approve: (incidentId) => decide(incidentId, "approved"),
     reject: (incidentId) => decide(incidentId, "rejected"),
   };
