@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo } from "react";
 import type { UseControlPlaneReturn } from "@/hooks/useControlPlane";
 import type { UseTerminalStreamReturn } from "@/types/terminal";
 
@@ -8,32 +8,44 @@ import type { UseTerminalStreamReturn } from "@/types/terminal";
  * upstream channel on the control plane yet, so they stay inert — the terminal
  * is a read-only diagnostic stream.
  */
+
+/**
+ * Pure delta over the bounded incident-plane transcript. The plane caps the
+ * transcript prefix at MAX_TERMINAL_CHARS, so comparing prefixes cannot tell a
+ * rotation from a reset — that fallback re-rendered the whole retained tail.
+ * The monotonic logical cursor stays valid across rotation; only the newly
+ * appended suffix is returned, exactly once.
+ */
+export function nextTerminalDelta(
+  transcript: string,
+  logicalEnd: number,
+  delivered: number,
+): { incomingData: string | null; delivered: number } {
+  if (logicalEnd <= delivered) return { incomingData: null, delivered };
+  const windowStart = logicalEnd - transcript.length;
+  const unrendered = Math.max(delivered, windowStart);
+  if (unrendered >= logicalEnd) return { incomingData: null, delivered };
+  return {
+    incomingData: transcript.slice(unrendered - windowStart),
+    delivered: logicalEnd,
+  };
+}
+
 export function useControlPlaneTerminalStream(
   plane: UseControlPlaneReturn,
 ): UseTerminalStreamReturn {
   const sendData = useCallback(() => {}, []);
   const sendResize = useCallback(() => {}, []);
-  // Track the transcript prefix already handed to the terminal so a burst
-  // flushed in one render still delivers every event, not only the last slot.
-  const lastTranscriptRef = useRef("");
-  return useMemo<UseTerminalStreamReturn>(() => {
-    const transcript = plane.terminalChunk;
-    const last = lastTranscriptRef.current;
-    let incomingData: string | null = null;
-    if (transcript !== last) {
-      if (transcript.length > last.length && transcript.startsWith(last)) {
-        incomingData = transcript.slice(last.length);
-      } else {
-        // Transcript was capped (rotation) or reset: emit the current tail once.
-        incomingData = transcript;
-      }
-      lastTranscriptRef.current = transcript;
-    }
-    return {
-      incomingData,
+  // Pure adapter: the consumer derives each write from the bounded window plus
+  // the monotonic cursor, so nothing here tracks delivery or terminal liveness.
+  return useMemo<UseTerminalStreamReturn>(
+    () => ({
+      transcript: plane.terminalChunk,
+      terminalCursor: plane.terminalCursor,
       connectionStatus: plane.status,
       sendData,
       sendResize,
-    };
-  }, [plane.terminalChunk, plane.status, sendData, sendResize]);
+    }),
+    [plane.terminalChunk, plane.terminalCursor, plane.status, sendData, sendResize],
+  );
 }

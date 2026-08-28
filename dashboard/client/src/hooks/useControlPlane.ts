@@ -86,6 +86,8 @@ export interface UseControlPlaneReturn {
   incidents: DeckIncident[];
   /** Cumulative incident-plane transcript rendered for the diagnostic terminal. */
   terminalChunk: string;
+  /** Monotonic count of transcript characters appended so far (never decreases). */
+  terminalCursor: number;
   /** POST an operator decision to /api/approvals; rejects on non-2xx. */
   approve: (incidentId: string) => Promise<void>;
   reject: (incidentId: string) => Promise<void>;
@@ -100,6 +102,8 @@ export function useControlPlane(): UseControlPlaneReturn {
   const [status, setStatus] = useState<ControlPlaneConnectionStatus>("CONNECTING");
   const [incidents, setIncidents] = useState<DeckIncident[]>([]);
   const [terminalChunk, setTerminalChunk] = useState("");
+  // Monotonic count of transcript characters appended to the bounded window.
+  const terminalCursorRef = useRef(0);
 
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -172,7 +176,9 @@ export function useControlPlane(): UseControlPlaneReturn {
         break;
     }
 
-    setTerminalChunk((prev) => `${prev}${terminalChunkFor(event)}`.slice(-MAX_TERMINAL_CHARS));
+    const chunk = terminalChunkFor(event);
+    terminalCursorRef.current += chunk.length;
+    setTerminalChunk((prev) => `${prev}${chunk}`.slice(-MAX_TERMINAL_CHARS));
   }, []);
 
   const connect = useCallback(() => {
@@ -249,6 +255,7 @@ export function useControlPlane(): UseControlPlaneReturn {
     status,
     incidents,
     terminalChunk,
+    terminalCursor: terminalCursorRef.current,
     approve: (incidentId) => decide(incidentId, "approved"),
     reject: (incidentId) => decide(incidentId, "rejected"),
   };
