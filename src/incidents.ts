@@ -313,13 +313,20 @@ export function createIncident(alert: NormalizedAlert): Incident | undefined {
       incidents.delete(id);
     }
   }
-  // At capacity, make room with resolved entries first: a terminal incident's
-  // session is done, so dropping it orphans nothing.
   if (incidents.size >= INCIDENT_MAX) {
-    for (const [id, incident] of incidents) {
-      if (TERMINAL_STATUSES.has(incident.status)) incidents.delete(id);
+    // At capacity, evict only the OLDEST terminal incidents, oldest first, and
+    // stop as soon as one slot is free: a terminal incident's session is done so
+    // dropping it orphans nothing, but the newer terminal history (below TTL) is
+    // still worth keeping rather than wiping every terminal at once.
+    const terminal = [...incidents.values()]
+      .filter((i) => TERMINAL_STATUSES.has(i.status))
+      .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+    for (const incident of terminal) {
+      if (incidents.size < INCIDENT_MAX) break;
+      incidents.delete(incident.id);
     }
-    // All remaining entries are live → refuse instead of silently orphaning one.
+    // No terminal entries left to evict → refuse instead of silently orphaning a
+    // live incident (its session is still running and needs its client to cancel it).
     if (incidents.size >= INCIDENT_MAX) return undefined;
   }
   const incident: Incident = {

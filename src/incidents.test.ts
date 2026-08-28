@@ -438,6 +438,40 @@ test("normalizeWebhooks rejects unsupported envelopes", () => {
   assert.match(results[0].details[0], /AlertManager|PagerDuty/);
 });
 
+test("cap eviction removes only the oldest terminal incident, keeping newer history", () => {
+  // The store already holds live incidents from earlier tests. Add two terminal
+  // (completed) incidents of distinct ages, then fill with live incidents until
+  // the cap overflow evicts the oldest — the boundary create we can observe.
+  const oldest = createIncident({ service_name: "svc", target_host: "old-terminal", severity: "warning" });
+  assert.ok(oldest);
+  patchIncident(oldest.id, {
+    createdAt: new Date(Date.now() - 59 * 60 * 1000).toISOString(), // below the 1h TTL sweep
+  });
+  setIncidentStatus(oldest.id, "completed");
+
+  const newer = createIncident({ service_name: "svc", target_host: "newer-terminal", severity: "warning" });
+  assert.ok(newer);
+  patchIncident(newer.id, {
+    createdAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+  });
+  setIncidentStatus(newer.id, "completed");
+
+  // Creates only ever fail after the last terminal slot is reclaimed, and that
+  // slot is `oldest`, so the loop always observes one clean overflow.
+  let overflowedOldest = false;
+  for (let n = 0; !overflowedOldest; n++) {
+    const incident = createIncident({ service_name: "svc", target_host: `fill-${n}`, severity: "warning" });
+    assert.ok(incident, "refusal before oldest was evicted means a live slot was orphand");
+    setIncidentStatus(incident.id, "awaiting_approval");
+    overflowedOldest = getIncident(oldest.id) === undefined;
+  }
+
+  // One overflow evicted exactly the oldest terminal incident; the newer one's
+  // below-TTL history survives instead of wiping every terminal in one go.
+  assert.equal(getIncident(oldest.id), undefined);
+  assert.ok(getIncident(newer.id));
+});
+
 // Keep this test last: it fills the in-memory store to INCIDENT_MAX.
 test("cap eviction refuses rather than evicting a live incident", () => {
   // Fill the store with live incidents; at the cap, creation is refused instead
