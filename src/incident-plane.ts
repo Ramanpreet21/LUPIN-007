@@ -102,16 +102,52 @@ export function computeSafetyBadges(command: string): SafetyBadge[] {
  * violates it, so one operator decision that authorizes several commands is
  * shown at the risk of the riskiest one, not just the first.
  */
+/**
+ * Split a command into shell statements, honoring quotes and backslash escapes
+ * so separators inside quoted/escaped text are not treated as control operators.
+ */
+function splitShellStatements(command: string): string[] {
+  const segments: string[] = [];
+  let current = "";
+  let quote: string | null = null;
+  let escaped = false;
+  for (const ch of command) {
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      current += ch;
+      continue;
+    }
+    if (quote) {
+      current += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === "\n" || ch === ";" || ch === "&" || ch === "|") {
+      segments.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  segments.push(current.trim());
+  return segments.filter((segment) => segment.length > 0);
+}
+
 function computeGateBadges(commands: string[]): SafetyBadge[] {
-  // Split shell statements so `echo x; rm -rf /tmp/*` is flagged, not just a
-  // command that begins with the forbidden pattern.
   return SAFETY_POLICY.map(({ name, regex }) => ({
     name,
     status: commands.some((command) =>
-      command
-        .split(/[;&|]|\r?\n+/)
-        .map((segment) => segment.trim())
-        .some((segment) => regex.test(segment)),
+      splitShellStatements(command).some((segment) => regex.test(segment)),
     )
       ? "fail"
       : "pass",
@@ -165,6 +201,7 @@ export function createIncidentRouter({
     if (!client) return;
     let step = 0;
     let turnId: string | undefined;
+    let sessionId: string | undefined;
     // Index tool calls by id across messages so an approval gate can resolve
     // every referenced call, not just the last message's toolCalls list.
     const toolCallById = new Map<string, ToolCall>();
@@ -172,7 +209,7 @@ export function createIncidentRouter({
       const { data } = await client.sessions.create({
         agent: { name: "incident-responder" },
       });
-      const sessionId = data.id;
+      sessionId = data.id;
       patchIncident(incidentId, { sessionId });
 
       const stream = await client.sessions.createTurnStream(sessionId, {
@@ -242,7 +279,14 @@ export function createIncidentRouter({
         }
       }
       // The stream ended without a gate or turn.done — report it rather than
-      // leaving the incident stuck in `diagnosing`.
+      // leaving the incident stuck in `diagnosing`, and stop remote work.
+      if (sessionId) {
+        try {
+          await client.sessions.cancel(sessionId);
+        } catch {
+          /* diagnosis already failing; nothing left to do */
+        }
+      }
       setIncidentStatus(incidentId, "failed");
       broadcast({
         type: "execution_complete",
@@ -254,6 +298,13 @@ export function createIncidentRouter({
         { event: "incident_diagnosis_failed", incident_id: incidentId, err },
         "incident diagnosis failed",
       );
+      if (sessionId) {
+        try {
+          await client.sessions.cancel(sessionId);
+        } catch {
+          /* diagnosis already failing; nothing left to do */
+        }
+      }
       setIncidentStatus(incidentId, "failed");
       broadcast({
         type: "execution_complete",
@@ -383,6 +434,15 @@ export function createIncidentRouter({
             break;
         }
       }
+      if (outcome !== "success") {
+        // Clean EOF without a terminal event still leaves authorized tool work
+        // running — cancel it before declaring the incident failed.
+        try {
+          await client.sessions.cancel(incident.sessionId);
+        } catch {
+          /* already failing; nothing left to do */
+        }
+      }
       setIncidentStatus(incidentId, outcome === "success" ? "completed" : "failed");
       broadcast({
         type: "execution_complete",
@@ -419,6 +479,7 @@ export function createIncidentRouter({
     const results = normalizeWebhooks(req.body);
     const incidentIds: string[] = [];
     let skipped = 0;
+    let refused = 0;
     let firstError: { error: string; details: string[] } | undefined;
     for (const parsed of results) {
       if (!parsed.ok) {
@@ -428,8 +489,11 @@ export function createIncidentRouter({
       }
       const incident = createIncident(parsed.alert);
       if (!incident) {
-        res.status(503).json({ error: "incident_store_full" });
-        return;
+        // Capacity refusal: keep processing so the response discloses exactly
+        // which alerts were accepted — a whole-request failure would make a
+        // retry re-create the accepted ones.
+        refused += 1;
+        continue;
       }
       incidentIds.push(incident.id);
       broadcast({
@@ -441,6 +505,10 @@ export function createIncidentRouter({
       void runDiagnosis(parsed.alert, incident.id);
     }
     if (incidentIds.length === 0) {
+      if (refused > 0) {
+        res.status(503).json({ error: "incident_store_full", refused });
+        return;
+      }
       res.status(400).json({ error: firstError?.error, details: firstError?.details });
       return;
     }
@@ -449,6 +517,7 @@ export function createIncidentRouter({
       incident_id: incidentIds[0],
       incident_ids: incidentIds,
       ...(skipped > 0 ? { skipped } : {}),
+      ...(refused > 0 ? { refused } : {}),
     });
   });
 

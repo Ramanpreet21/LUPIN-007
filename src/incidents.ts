@@ -101,13 +101,14 @@ function stripInstancePort(instance: unknown): unknown {
 }
 
 /** Prometheus AlertManager webhook → one canonical alert per entry. */
-function fromAlertManager(raw: unknown): Array<Record<string, unknown>> | null {
+function fromAlertManager(raw: unknown): Array<Record<string, unknown> | null> | null {
   const body = asRecord(raw);
   if (!body || !Array.isArray(body.alerts) || body.alerts.length === 0) return null;
-  const mapped: Array<Record<string, unknown>> = [];
-  for (const alertRaw of body.alerts) {
+  // One entry per supplied alert — null for a malformed member — so the
+  // one-result-per-alert contract (and the route's `skipped` count) holds.
+  return body.alerts.map((alertRaw) => {
     const alert = asRecord(alertRaw);
-    if (!alert) continue;
+    if (!alert) return null;
     const labels = asRecord(alert.labels) ?? {};
     const annotations = asRecord(alert.annotations) ?? {};
     const summary =
@@ -116,14 +117,13 @@ function fromAlertManager(raw: unknown): Array<Record<string, unknown>> | null {
         : typeof annotations.description === "string"
           ? annotations.description
           : undefined;
-    mapped.push({
+    return {
       target_host: stripInstancePort(pickString(labels, "instance")),
       service_name: pickString(labels, "service", "alertname"),
       severity: labels.severity,
       ...(typeof summary === "string" ? { alert_summary: summary } : {}),
-    });
-  }
-  return mapped.length > 0 ? mapped : null;
+    };
+  });
 }
 
 /** PagerDuty v3 webhook (events v2 payload or incident payload) → canonical alert. */
@@ -166,7 +166,13 @@ export function normalizeWebhooks(raw: unknown): AlertParseResult[] {
     return [normalizeAlert(raw)];
   }
   const am = fromAlertManager(raw);
-  if (am) return am.map((m) => normalizeAlert(m));
+  if (am) {
+    return am.map((m) =>
+      m
+        ? normalizeAlert(m)
+        : { ok: false, error: "invalid_alert", details: ["AlertManager batch entry is not an object"] },
+    );
+  }
   const pager = fromPagerDuty(raw);
   if (pager) return [normalizeAlert(pager)];
   return [

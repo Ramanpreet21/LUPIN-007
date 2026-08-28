@@ -149,6 +149,19 @@ test("normalizeWebhooks keeps every alert in a batch", () => {
   );
 });
 
+test("normalizeWebhooks flags malformed AlertManager batch members", () => {
+  const results = normalizeWebhooks({
+    alerts: [
+      "not-an-object",
+      { labels: { alertname: "LowDisk", instance: "db-02", severity: "warning" } },
+    ],
+  });
+  assert.equal(results.length, 2);
+  assert.equal(results[0].ok, false);
+  if (!results[0].ok) assert.match(results[0].details[0], /not an object/);
+  assert.equal(results[1].ok, true);
+});
+
 test("normalizeWebhooks strips IPv6 host:port instances", () => {
   const results = normalizeWebhooks({
     alerts: [{ labels: { alertname: "V6Down", instance: "[2001:db8::1]:9100", severity: "critical" } }],

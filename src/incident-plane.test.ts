@@ -277,6 +277,87 @@ test("destructive badge fails on a compound command, not just a leading rm", asy
   }
 });
 
+/** Gate stream whose risky text appears only inside a quoted argument. */
+function quotedGateStream(): TurnStreamingEvent[] {
+  const t0 = new Date().toISOString();
+  return [
+    ev({ type: "turn.created", id: "e0", createdAt: t0, turnId: "turn-1", threadId: "thread-1", previousTurnId: null, state: "running" }),
+    ev({ type: "model.message", id: "e1", createdAt: t0, threadId: "thread-1", content: "Diagnosing...", reasoningContent: "" }),
+    ev({
+      type: "model.message",
+      id: "e2",
+      createdAt: t0,
+      threadId: "thread-1",
+      toolCalls: [
+        { id: "call-1", type: "function", function: { name: "bash", arguments: '{"command":"printf \'note; rm -rf /tmp/*\'"}' } },
+      ],
+    }),
+    ev({ type: "tool.approval_required", id: "e3", createdAt: t0, threadId: "thread-1", toolCalls: [{ id: "call-1", sourceEventId: "e2" }] }),
+  ];
+}
+
+test("destructive badge stays pass when the risky text is only a quoted argument", async () => {
+  const fake = makeFakeHandle(quotedGateStream(), []);
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    await postJson(`http://127.0.0.1:${server.port}/alerts`, alertBody);
+    const pending = await ws.waitFor("pending_approval");
+    const badges = pending.payload.safety_badges as Array<{ name: string; status: string }>;
+    assert.equal(badges.find((b) => b.name === "destructive")?.status, "pass");
+  } finally {
+    ws.close();
+    await server.close();
+  }
+});
+
+test("approved stream that ends without turn.done cancels the session", async () => {
+  const t0 = new Date().toISOString();
+  const fake = makeFakeHandle(diagnosisGateStream(), [
+    ev({ type: "turn.created", id: "r0", createdAt: t0, turnId: "turn-2", threadId: "thread-1", previousTurnId: "turn-1", state: "running" }),
+    ev({ type: "model.message", id: "r1", createdAt: t0, threadId: "thread-1", content: "still working" }),
+  ]);
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    const res = await postJson(`http://127.0.0.1:${server.port}/alerts`, alertBody);
+    const { incident_id } = (await res.json()) as { incident_id: string };
+    await ws.waitFor("pending_approval");
+    await postJson(
+      `http://127.0.0.1:${server.port}/api/approvals`,
+      JSON.stringify({ incident_id, decision: "approved" }),
+    );
+    const done = await ws.waitFor("execution_complete");
+    assert.equal(done.payload.status, "failed");
+    assert.deepEqual(fake.cancelled, ["sess-1"]);
+  } finally {
+    ws.close();
+    await server.close();
+  }
+});
+
+test("diagnosis stream that ends abruptly cancels the orphaned session", async () => {
+  const t0 = new Date().toISOString();
+  const fake = makeFakeHandle(
+    [
+      ev({ type: "turn.created", id: "d0", createdAt: t0, turnId: "turn-1", threadId: "thread-1", previousTurnId: null, state: "running" }),
+      ev({ type: "model.message", id: "d1", createdAt: t0, threadId: "thread-1", content: "partial reasoning", reasoningContent: "" }),
+    ],
+    [],
+  );
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    await postJson(`http://127.0.0.1:${server.port}/alerts`, alertBody);
+    const done = await ws.waitFor("execution_complete");
+    assert.equal(done.payload.status, "failed");
+    assert.deepEqual(fake.cancelled, ["sess-1"]);
+  } finally {
+    ws.close();
+    await server.close();
+  }
+});
+
 test("POST /api/approvals rejected → deny resume + session cancelled + execution_complete rejected", async () => {
   const fake = makeFakeHandle(diagnosisGateStream(), doneStream("done"));
   const server = await withServer(fake.handle);
