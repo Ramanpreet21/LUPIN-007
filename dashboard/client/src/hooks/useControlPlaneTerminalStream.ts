@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import type { UseControlPlaneReturn } from "@/hooks/useControlPlane";
 import type { UseTerminalStreamReturn } from "@/types/terminal";
 
@@ -13,13 +13,27 @@ export function useControlPlaneTerminalStream(
 ): UseTerminalStreamReturn {
   const sendData = useCallback(() => {}, []);
   const sendResize = useCallback(() => {}, []);
-  return useMemo<UseTerminalStreamReturn>(
-    () => ({
-      incomingData: plane.terminalChunk,
+  // Track the transcript prefix already handed to the terminal so a burst
+  // flushed in one render still delivers every event, not only the last slot.
+  const lastTranscriptRef = useRef("");
+  return useMemo<UseTerminalStreamReturn>(() => {
+    const transcript = plane.terminalChunk;
+    const last = lastTranscriptRef.current;
+    let incomingData: string | null = null;
+    if (transcript !== last) {
+      if (transcript.length > last.length && transcript.startsWith(last)) {
+        incomingData = transcript.slice(last.length);
+      } else {
+        // Transcript was capped (rotation) or reset: emit the current tail once.
+        incomingData = transcript;
+      }
+      lastTranscriptRef.current = transcript;
+    }
+    return {
+      incomingData,
       connectionStatus: plane.status,
       sendData,
       sendResize,
-    }),
-    [plane.terminalChunk, plane.status, sendData, sendResize],
-  );
+    };
+  }, [plane.terminalChunk, plane.status, sendData, sendResize]);
 }

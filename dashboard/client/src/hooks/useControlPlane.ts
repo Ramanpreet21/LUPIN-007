@@ -14,9 +14,10 @@ const CONTROL_PLANE_ORIGIN =
 const CONTROL_PLANE_WS =
   import.meta.env.VITE_CONTROL_PLANE_WS ?? "ws://localhost:3000/ws";
 
-/** Bounds for the live incident list and per-incident thinking buffer. */
+/** Bounds for the live incident list, per-incident thinking buffer, and terminal transcript. */
 const MAX_INCIDENTS = 48;
 const MAX_THINKING_LINES = 40;
+const MAX_TERMINAL_CHARS = 12_000;
 
 const EXECUTION_TO_DECK: Record<ExecutionStatus, IncidentDeckStatus> = {
   success: "completed",
@@ -69,14 +70,13 @@ function terminalChunkFor(event: ControlPlaneEvent): string {
       return `\r\n${stamp} ${ansi.amber}[APPROVAL REQUIRED]${ansi.reset} ${event.incident_id}\r\n  ${commands}\r\n`;
     }
     case "execution_complete": {
-      const color =
-        event.payload.status === "success"
-          ? ansi.mint
-          : event.payload.status === "rejected"
-            ? ansi.amber
-            : ansi.red;
-      return `\r\n${stamp} ${color}[EXEC ${event.payload.status.toUpperCase()}]${ansi.reset} ${event.incident_id}\r\n`;
+      const status = event.payload.status ?? "unknown";
+      const color = status === "success" ? ansi.mint : status === "rejected" ? ansi.amber : ansi.red;
+      return `\r\n${stamp} ${color}[EXEC ${String(status).toUpperCase()}]${ansi.reset} ${event.incident_id}\r\n`;
     }
+    default:
+      const eventType = String((event as { type?: string }).type ?? "unknown");
+      return `\r\n${stamp} ${ansi.muted}[EVENT ${eventType}]${ansi.reset}\r\n`;
   }
 }
 
@@ -84,8 +84,8 @@ export interface UseControlPlaneReturn {
   status: ControlPlaneConnectionStatus;
   /** Live incidents, newest first. */
   incidents: DeckIncident[];
-  /** Latest incident-plane event rendered for the diagnostic terminal. */
-  terminalChunk: string | null;
+  /** Cumulative incident-plane transcript rendered for the diagnostic terminal. */
+  terminalChunk: string;
   /** POST an operator decision to /api/approvals; rejects on non-2xx. */
   approve: (incidentId: string) => Promise<void>;
   reject: (incidentId: string) => Promise<void>;
@@ -99,7 +99,7 @@ export interface UseControlPlaneReturn {
 export function useControlPlane(): UseControlPlaneReturn {
   const [status, setStatus] = useState<ControlPlaneConnectionStatus>("CONNECTING");
   const [incidents, setIncidents] = useState<DeckIncident[]>([]);
-  const [terminalChunk, setTerminalChunk] = useState<string | null>(null);
+  const [terminalChunk, setTerminalChunk] = useState("");
 
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -121,6 +121,7 @@ export function useControlPlane(): UseControlPlaneReturn {
     ) {
       return;
     }
+    if (!event.payload || typeof event.payload !== "object") return;
 
     switch (event.type) {
       case "incident_created":
@@ -171,11 +172,12 @@ export function useControlPlane(): UseControlPlaneReturn {
         break;
     }
 
-    setTerminalChunk(terminalChunkFor(event));
+    setTerminalChunk((prev) => `${prev}${terminalChunkFor(event)}`.slice(-MAX_TERMINAL_CHARS));
   }, []);
 
   const connect = useCallback(() => {
     if (disposedRef.current) return;
+    socketRef.current?.close();
     setStatus("CONNECTING");
     let socket: WebSocket;
     try {
@@ -195,6 +197,8 @@ export function useControlPlane(): UseControlPlaneReturn {
     };
     socket.onclose = () => {
       if (disposedRef.current) return;
+      // A replaced socket's late close must not schedule a second reconnect.
+      if (socketRef.current !== socket) return;
       setStatus("DISCONNECTED");
       const delay = Math.min(8000, 500 * 2 ** attemptsRef.current);
       attemptsRef.current += 1;
