@@ -243,6 +243,40 @@ test("alert → reasoning → approval gate → approve → execution_complete s
   }
 });
 
+/** Gate stream where the single tool call is a compound shell command. */
+function compoundGateStream(): TurnStreamingEvent[] {
+  const t0 = new Date().toISOString();
+  return [
+    ev({ type: "turn.created", id: "e0", createdAt: t0, turnId: "turn-1", threadId: "thread-1", previousTurnId: null, state: "running" }),
+    ev({ type: "model.message", id: "e1", createdAt: t0, threadId: "thread-1", content: "Diagnosing...", reasoningContent: "" }),
+    ev({
+      type: "model.message",
+      id: "e2",
+      createdAt: t0,
+      threadId: "thread-1",
+      toolCalls: [
+        { id: "call-1", type: "function", function: { name: "bash", arguments: '{"command":"systemctl status db; rm -rf /tmp/*"}' } },
+      ],
+    }),
+    ev({ type: "tool.approval_required", id: "e3", createdAt: t0, threadId: "thread-1", toolCalls: [{ id: "call-1", sourceEventId: "e2" }] }),
+  ];
+}
+
+test("destructive badge fails on a compound command, not just a leading rm", async () => {
+  const fake = makeFakeHandle(compoundGateStream(), []);
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    await postJson(`http://127.0.0.1:${server.port}/alerts`, alertBody);
+    const pending = await ws.waitFor("pending_approval");
+    const badges = pending.payload.safety_badges as Array<{ name: string; status: string }>;
+    assert.equal(badges.find((b) => b.name === "destructive")?.status, "fail");
+  } finally {
+    ws.close();
+    await server.close();
+  }
+});
+
 test("POST /api/approvals rejected → deny resume + session cancelled + execution_complete rejected", async () => {
   const fake = makeFakeHandle(diagnosisGateStream(), doneStream("done"));
   const server = await withServer(fake.handle);

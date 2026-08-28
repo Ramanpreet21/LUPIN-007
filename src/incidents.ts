@@ -92,28 +92,38 @@ function pickString(obj: Record<string, unknown> | null, ...keys: string[]): unk
   return undefined;
 }
 
-/** Prometheus AlertManager webhook → canonical alert. */
-function fromAlertManager(raw: unknown): Record<string, unknown> | null {
+/** `host:port` / `[v6]:port` → host only; leaves bare hosts (incl. unbracketed IPv6) as-is. */
+function stripInstancePort(instance: unknown): unknown {
+  if (typeof instance !== "string") return instance;
+  const bracketed = /^\[(.+)]:\d+$/.exec(instance);
+  if (bracketed) return bracketed[1];
+  return instance.replace(/^([^:]+):\d+$/, "$1");
+}
+
+/** Prometheus AlertManager webhook → one canonical alert per entry. */
+function fromAlertManager(raw: unknown): Array<Record<string, unknown>> | null {
   const body = asRecord(raw);
   if (!body || !Array.isArray(body.alerts) || body.alerts.length === 0) return null;
-  const first = asRecord(body.alerts[0]);
-  if (!first) return null;
-  const labels = asRecord(first.labels) ?? {};
-  const annotations = asRecord(first.annotations) ?? {};
-  const summary = typeof annotations.summary === "string"
-    ? annotations.summary
-    : typeof annotations.description === "string"
-      ? annotations.description
-      : undefined;
-  const instance = pickString(labels, "instance");
-  return {
-    target_host: typeof instance === "string" && /^[^:]+:\d+$/.test(instance)
-      ? instance.replace(/:\d+$/, "")
-      : instance,
-    service_name: pickString(labels, "service", "alertname"),
-    severity: labels.severity,
-    ...(typeof summary === "string" ? { alert_summary: summary } : {}),
-  };
+  const mapped: Array<Record<string, unknown>> = [];
+  for (const alertRaw of body.alerts) {
+    const alert = asRecord(alertRaw);
+    if (!alert) continue;
+    const labels = asRecord(alert.labels) ?? {};
+    const annotations = asRecord(alert.annotations) ?? {};
+    const summary =
+      typeof annotations.summary === "string"
+        ? annotations.summary
+        : typeof annotations.description === "string"
+          ? annotations.description
+          : undefined;
+    mapped.push({
+      target_host: stripInstancePort(pickString(labels, "instance")),
+      service_name: pickString(labels, "service", "alertname"),
+      severity: labels.severity,
+      ...(typeof summary === "string" ? { alert_summary: summary } : {}),
+    });
+  }
+  return mapped.length > 0 ? mapped : null;
 }
 
 /** PagerDuty v3 webhook (events v2 payload or incident payload) → canonical alert. */
@@ -146,21 +156,26 @@ function fromPagerDuty(raw: unknown): Record<string, unknown> | null {
 }
 
 /**
- * Accepts the canonical shape, Prometheus AlertManager, or PagerDuty v3.
- * Anything else is rejected with an explicit error.
+ * Accepts one or more alerts in the canonical shape, Prometheus AlertManager,
+ * or PagerDuty v3. Returns one result per alert so a batch never silently
+ * drops entries; anything unsupported yields a single rejected result.
  */
-export function normalizeWebhook(raw: unknown): AlertParseResult {
+export function normalizeWebhooks(raw: unknown): AlertParseResult[] {
   const body = asRecord(raw);
   if (body && typeof body.service_name === "string" && typeof body.target_host === "string") {
-    return normalizeAlert(raw);
+    return [normalizeAlert(raw)];
   }
-  const mapped = fromAlertManager(raw) ?? fromPagerDuty(raw);
-  if (mapped) return normalizeAlert(mapped);
-  return {
-    ok: false,
-    error: "invalid_alert",
-    details: ["expected AlertManager, PagerDuty, or canonical (service_name+target_host) webhook shape"],
-  };
+  const am = fromAlertManager(raw);
+  if (am) return am.map((m) => normalizeAlert(m));
+  const pager = fromPagerDuty(raw);
+  if (pager) return [normalizeAlert(pager)];
+  return [
+    {
+      ok: false,
+      error: "invalid_alert",
+      details: ["expected AlertManager, PagerDuty, or canonical (service_name+target_host) webhook shape"],
+    },
+  ];
 }
 
 export type IncidentStatus =

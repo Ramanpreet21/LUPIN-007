@@ -5,7 +5,7 @@ import {
   getIncident,
   INCIDENT_MAX,
   normalizeAlert,
-  normalizeWebhook,
+  normalizeWebhooks,
   patchIncident,
   setIncidentStatus,
 } from "./incidents";
@@ -116,8 +116,8 @@ test("TTL sweep expires resolved incidents only; live ones are retained", () => 
   assert.ok(getIncident(live.id)); // awaiting_approval → kept until the cap
 });
 
-test("normalizeWebhook maps Prometheus AlertManager payloads", () => {
-  const result = normalizeWebhook({
+test("normalizeWebhooks maps Prometheus AlertManager payloads", () => {
+  const results = normalizeWebhooks({
     alerts: [
       {
         labels: { alertname: "HighCPU", instance: "prod-db-01:9100", severity: "critical" },
@@ -125,29 +125,56 @@ test("normalizeWebhook maps Prometheus AlertManager payloads", () => {
       },
     ],
   });
-  assert.equal(result.ok, true);
-  if (!result.ok) return;
-  assert.equal(result.alert.service_name, "HighCPU");
-  assert.equal(result.alert.target_host, "prod-db-01"); // :port stripped
-  assert.equal(result.alert.severity, "critical");
-  assert.equal(result.alert.alert_summary, "prod-db-01 CPU > 80% for 5m"); // summary wins over description
+  assert.equal(results.length, 1);
+  const parsed = results[0];
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.alert.service_name, "HighCPU");
+  assert.equal(parsed.alert.target_host, "prod-db-01"); // :port stripped
+  assert.equal(parsed.alert.severity, "critical");
+  assert.equal(parsed.alert.alert_summary, "prod-db-01 CPU > 80% for 5m"); // summary wins over description
 });
 
-test("normalizeWebhook maps PagerDuty events-v2 payloads", () => {
-  const result = normalizeWebhook({
+test("normalizeWebhooks keeps every alert in a batch", () => {
+  const results = normalizeWebhooks({
+    alerts: [
+      { labels: { alertname: "HighCPU", instance: "prod-db-01:9100", severity: "critical" } },
+      { labels: { alertname: "LowDisk", instance: "db-02", severity: "warning" } },
+    ],
+  });
+  assert.equal(results.length, 2);
+  assert.deepEqual(
+    results.flatMap((r) => (r.ok ? [r.alert.target_host] : [])),
+    ["prod-db-01", "db-02"],
+  );
+});
+
+test("normalizeWebhooks strips IPv6 host:port instances", () => {
+  const results = normalizeWebhooks({
+    alerts: [{ labels: { alertname: "V6Down", instance: "[2001:db8::1]:9100", severity: "critical" } }],
+  });
+  const parsed = results[0];
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.alert.target_host, "2001:db8::1");
+});
+
+test("normalizeWebhooks maps PagerDuty events-v2 payloads", () => {
+  const results = normalizeWebhooks({
     payload: { source: "db-02.internal", severity: "error", summary: "Postgres down" },
     service: { name: "postgres", summary: "Postgres cluster" },
   });
-  assert.equal(result.ok, true);
-  if (!result.ok) return;
-  assert.equal(result.alert.service_name, "postgres");
-  assert.equal(result.alert.target_host, "db-02.internal");
-  assert.equal(result.alert.severity, "error");
-  assert.equal(result.alert.alert_summary, "Postgres down");
+  const parsed = results[0];
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.alert.service_name, "postgres");
+  assert.equal(parsed.alert.target_host, "db-02.internal");
+  assert.equal(parsed.alert.severity, "error");
+  assert.equal(parsed.alert.alert_summary, "Postgres down");
 });
 
-test("normalizeWebhook maps PagerDuty incident webhooks via custom_details.host", () => {
-  const result = normalizeWebhook({
+test("normalizeWebhooks maps PagerDuty incident webhooks via custom_details.host", () => {
+  const results = normalizeWebhooks({
     event: "incident.triggered",
     data: {
       incident: {
@@ -158,26 +185,29 @@ test("normalizeWebhook maps PagerDuty incident webhooks via custom_details.host"
       },
     },
   });
-  assert.equal(result.ok, true);
-  if (!result.ok) return;
-  assert.equal(result.alert.service_name, "nginx-edge");
-  assert.equal(result.alert.target_host, "lb-01");
-  assert.equal(result.alert.severity, "warning");
-  assert.equal(result.alert.alert_summary, "Node flapping");
+  const parsed = results[0];
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.alert.service_name, "nginx-edge");
+  assert.equal(parsed.alert.target_host, "lb-01");
+  assert.equal(parsed.alert.severity, "warning");
+  assert.equal(parsed.alert.alert_summary, "Node flapping");
 });
 
-test("normalizeWebhook rejects PagerDuty payloads without a host", () => {
-  const result = normalizeWebhook({ payload: { severity: "warning", summary: "no source" } });
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.match(result.details[0], /target_host/);
+test("normalizeWebhooks rejects PagerDuty payloads without a host", () => {
+  const results = normalizeWebhooks({ payload: { severity: "warning", summary: "no source" } });
+  assert.equal(results.length, 1);
+  assert.equal(results[0].ok, false);
+  if (results[0].ok) return;
+  assert.match(results[0].details[0], /target_host/);
 });
 
-test("normalizeWebhook rejects unsupported envelopes", () => {
-  const result = normalizeWebhook({ hello: "world" });
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.match(result.details[0], /AlertManager|PagerDuty/);
+test("normalizeWebhooks rejects unsupported envelopes", () => {
+  const results = normalizeWebhooks({ hello: "world" });
+  assert.equal(results.length, 1);
+  assert.equal(results[0].ok, false);
+  if (results[0].ok) return;
+  assert.match(results[0].details[0], /AlertManager|PagerDuty/);
 });
 
 // Keep this test last: it fills the in-memory store to INCIDENT_MAX.

@@ -16,7 +16,7 @@ import { INCIDENT_RESPONDER_PROMPT, SAFETY_POLICY } from "./trueforge-config";
 import {
   createIncident,
   getIncident,
-  normalizeWebhook,
+  normalizeWebhooks,
   patchIncident,
   setIncidentStatus,
   type NormalizedAlert,
@@ -103,9 +103,18 @@ export function computeSafetyBadges(command: string): SafetyBadge[] {
  * shown at the risk of the riskiest one, not just the first.
  */
 function computeGateBadges(commands: string[]): SafetyBadge[] {
+  // Split shell statements so `echo x; rm -rf /tmp/*` is flagged, not just a
+  // command that begins with the forbidden pattern.
   return SAFETY_POLICY.map(({ name, regex }) => ({
     name,
-    status: commands.some((command) => regex.test(command)) ? "fail" : "pass",
+    status: commands.some((command) =>
+      command
+        .split(/[;&|]|\r?\n+/)
+        .map((segment) => segment.trim())
+        .some((segment) => regex.test(segment)),
+    )
+      ? "fail"
+      : "pass",
   }));
 }
 
@@ -299,6 +308,9 @@ export function createIncidentRouter({
       if (decision === "rejected") {
         // Cancel the session no matter what so no orphaned tool work continues
         // after a deny — even if the deny-resume stream itself fails.
+        // Cancel in flight immediately — a stalled deny stream must not be able
+        // to block the session cancellation the finally below guarantees.
+        const cancelSession = client.sessions.cancel(incident.sessionId);
         try {
           for await (const _ev of stream) {
             /* drain the deny turn to completion */
@@ -309,7 +321,7 @@ export function createIncidentRouter({
             "deny stream failed; cancelling session",
           );
         } finally {
-          await client.sessions.cancel(incident.sessionId);
+          await cancelSession;
         }
         setIncidentStatus(incidentId, "rejected");
         broadcast({
@@ -382,14 +394,12 @@ export function createIncidentRouter({
         { event: "approval_resume_failed", incident_id: incidentId, decision, err },
         "approval resume failed",
       );
-      // A denied turn must never leave the session running, even if resuming it
-      // failed before the rejected branch's finally could cancel.
-      if (decision === "rejected") {
-        try {
-          await client.sessions.cancel(incident.sessionId);
-        } catch {
-          /* already failing; nothing left to do */
-        }
+      // Any resume failure must not leave an authorized session running: a
+      // denied turn and an approved-but-failed turn both cancel the session.
+      try {
+        await client.sessions.cancel(incident.sessionId);
+      } catch {
+        /* already failing; nothing left to do */
       }
       setIncidentStatus(incidentId, "failed");
       broadcast({
@@ -406,24 +416,40 @@ export function createIncidentRouter({
       res.status(503).json({ error: "trueforge_unconfigured" });
       return;
     }
-    const parsed = normalizeWebhook(req.body);
-    if (!parsed.ok) {
-      res.status(400).json({ error: parsed.error, details: parsed.details });
+    const results = normalizeWebhooks(req.body);
+    const incidentIds: string[] = [];
+    let skipped = 0;
+    let firstError: { error: string; details: string[] } | undefined;
+    for (const parsed of results) {
+      if (!parsed.ok) {
+        skipped += 1;
+        if (!firstError) firstError = parsed;
+        continue;
+      }
+      const incident = createIncident(parsed.alert);
+      if (!incident) {
+        res.status(503).json({ error: "incident_store_full" });
+        return;
+      }
+      incidentIds.push(incident.id);
+      broadcast({
+        type: "incident_created",
+        incident_id: incident.id,
+        payload: { diagnosis: null },
+      });
+      // Accept first — the turn streams asynchronously and may block at the gate.
+      void runDiagnosis(parsed.alert, incident.id);
+    }
+    if (incidentIds.length === 0) {
+      res.status(400).json({ error: firstError?.error, details: firstError?.details });
       return;
     }
-    const incident = createIncident(parsed.alert);
-    if (!incident) {
-      res.status(503).json({ error: "incident_store_full" });
-      return;
-    }
-    broadcast({
-      type: "incident_created",
-      incident_id: incident.id,
-      payload: { diagnosis: null },
+    res.status(202).json({
+      status: "accepted",
+      incident_id: incidentIds[0],
+      incident_ids: incidentIds,
+      ...(skipped > 0 ? { skipped } : {}),
     });
-    // Accept first — the turn streams asynchronously and may block at the gate.
-    res.status(202).json({ status: "accepted", incident_id: incident.id });
-    void runDiagnosis(parsed.alert, incident.id);
   });
 
   router.post("/api/approvals", async (req: Request, res: Response) => {
