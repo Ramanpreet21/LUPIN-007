@@ -225,7 +225,11 @@ export default function Home() {
       session: { ...mockAgentStatus.session, hostname: activeTarget.host, targetIp: `SSH · ${activeTarget.port}`, sshStatus: transportToSshStatus[controlPlane.status], latencyMs: controlPlane.status === "CONNECTED" ? mockAgentStatus.session.latencyMs : 0 },
       engine: { ...mockAgentStatus.engine, socketConnected: controlPlane.status === "CONNECTED" },
       activeSkillId: activeAgentSkillId,
-      skills: mockAgentStatus.skills.map((skill) => ({ ...skill, status: controlPlane.isExecuting && skill.id === activeAgentSkillId ? "EXECUTING" : "READY" })),
+      skills: mockAgentStatus.skills.map((skill) =>
+        skill.id === activeAgentSkillId && skill.status !== "RESTRICTED"
+          ? { ...skill, status: controlPlane.isExecuting ? "EXECUTING" : "READY" }
+          : skill,
+      ),
       safety: { ...mockAgentStatus.safety, approvalMode, isExecuting: controlPlane.isExecuting && !agentStopped },
       policy: { ...mockAgentStatus.policy, blockedCommandCount: controlPlane.blockedExecutionCount },
     }),

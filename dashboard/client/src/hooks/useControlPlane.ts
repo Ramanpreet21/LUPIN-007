@@ -49,6 +49,18 @@ function upsertIncident(
   return rows.map((row, i) => (i === index ? update(row) : row));
 }
 
+/** Is the plane actively working an incident? True during diagnosis and through
+ * the operator-approved window (decide() moves a row to `approved` before the
+ * execution_complete event finalizes it). */
+export function isPlaneExecuting(rows: DeckIncident[]): boolean {
+  return rows.some((row) => row.status === "diagnosing" || row.status === "approved");
+}
+
+/** Executions rejected or failed this session (live policy-block proxy). */
+export function countBlockedExecutions(rows: DeckIncident[]): number {
+  return rows.filter((row) => row.status === "rejected" || row.status === "failed").length;
+}
+
 /** One ANSI display chunk for the diagnostic terminal per WS event. */
 function terminalChunkFor(event: ControlPlaneEvent): string {
   const time = new Date().toLocaleTimeString([], {
@@ -255,8 +267,8 @@ export function useControlPlane(): UseControlPlaneReturn {
     [],
   );
 
-  const isExecuting = incidents.some((row) => row.status === "diagnosing");
-  const blockedExecutionCount = incidents.filter((row) => row.status === "rejected" || row.status === "failed").length;
+  const isExecuting = isPlaneExecuting(incidents);
+  const blockedExecutionCount = countBlockedExecutions(incidents);
   return {
     status,
     incidents,

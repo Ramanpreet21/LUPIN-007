@@ -8,7 +8,7 @@ export const mockAgentStatus: AgentStatusSummary = {
     { id: "ssh", displayName: "SSH", category: "SSH", status: "READY", executionPolicy: "POLICY_GATED", policyConstraintMessage: "Remote mutations require confirmation." },
     { id: "files", displayName: "Files", category: "Filesystem", status: "READY", executionPolicy: "AUTONOMOUS" },
     { id: "ast", displayName: "AST", category: "AST_Parser", status: "READY", executionPolicy: "AUTONOMOUS" },
-    { id: "sandbox", displayName: "Sandbox", category: "Sandbox_Runner", status: "EXECUTING", executionPolicy: "POLICY_GATED", policyConstraintMessage: "Production network access is restricted." },
+    { id: "sandbox", displayName: "Sandbox", category: "Sandbox_Runner", status: "READY", executionPolicy: "POLICY_GATED", policyConstraintMessage: "Production network access is restricted." },
   ],
   activeSkillId: "sandbox",
   safety: { approvalMode: "AUTONOMOUS", isExecuting: true },
