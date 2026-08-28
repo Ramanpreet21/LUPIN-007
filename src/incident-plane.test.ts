@@ -355,6 +355,10 @@ test("multi-call approval gate resumes every gated tool call", async () => {
     // Safety badges cover the whole gate: the hidden `rm -rf` flags destructive.
     const badges = pending.payload.safety_badges as Array<{ name: string; status: string }>;
     assert.equal(badges.find((b) => b.name === "destructive")?.status, "fail");
+    // No sandbox state diff yet (blueprint PR #4) — `diff` lists every gated command with a `+`.
+    const diff = pending.payload.diff as string;
+    assert.ok(diff.includes("+ db2cli status"));
+    assert.ok(diff.includes("+ rm -rf /tmp/*"));
 
     const approve = await postJson(
       `http://127.0.0.1:${server.port}/api/approvals`,

@@ -80,6 +80,89 @@ export function normalizeAlert(raw: unknown): AlertParseResult {
   };
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function pickString(obj: Record<string, unknown> | null, ...keys: string[]): unknown {
+  if (!obj) return undefined;
+  for (const key of keys) if (typeof obj[key] === "string") return obj[key];
+  return undefined;
+}
+
+/** Prometheus AlertManager webhook → canonical alert. */
+function fromAlertManager(raw: unknown): Record<string, unknown> | null {
+  const body = asRecord(raw);
+  if (!body || !Array.isArray(body.alerts) || body.alerts.length === 0) return null;
+  const first = asRecord(body.alerts[0]);
+  if (!first) return null;
+  const labels = asRecord(first.labels) ?? {};
+  const annotations = asRecord(first.annotations) ?? {};
+  const summary = typeof annotations.summary === "string"
+    ? annotations.summary
+    : typeof annotations.description === "string"
+      ? annotations.description
+      : undefined;
+  const instance = pickString(labels, "instance");
+  return {
+    target_host: typeof instance === "string" && /^[^:]+:\d+$/.test(instance)
+      ? instance.replace(/:\d+$/, "")
+      : instance,
+    service_name: pickString(labels, "service", "alertname"),
+    severity: labels.severity,
+    ...(typeof summary === "string" ? { alert_summary: summary } : {}),
+  };
+}
+
+/** PagerDuty v3 webhook (events v2 payload or incident payload) → canonical alert. */
+function fromPagerDuty(raw: unknown): Record<string, unknown> | null {
+  const body = asRecord(raw);
+  if (!body) return null;
+  const payload = asRecord(body.payload);
+  if (payload && (payload.severity || payload.source || payload.summary)) {
+    const service = asRecord(body.service);
+    return {
+      target_host: pickString(payload, "source"),
+      service_name: pickString(service, "name", "summary"),
+      severity: payload.severity,
+      ...(typeof payload.summary === "string" ? { alert_summary: payload.summary } : {}),
+    };
+  }
+  const data = asRecord(body.data);
+  const incident = asRecord(data && data.incident);
+  if (incident) {
+    const service = asRecord(incident.service);
+    const custom = asRecord(incident.custom_details);
+    return {
+      target_host: pickString(custom, "host", "target_host", "instance") ?? pickString(incident, "source", "host"),
+      service_name: pickString(service, "name", "summary"),
+      severity: incident.severity,
+      ...(typeof incident.title === "string" ? { alert_summary: incident.title } : {}),
+    };
+  }
+  return null;
+}
+
+/**
+ * Accepts the canonical shape, Prometheus AlertManager, or PagerDuty v3.
+ * Anything else is rejected with an explicit error.
+ */
+export function normalizeWebhook(raw: unknown): AlertParseResult {
+  const body = asRecord(raw);
+  if (body && typeof body.service_name === "string" && typeof body.target_host === "string") {
+    return normalizeAlert(raw);
+  }
+  const mapped = fromAlertManager(raw) ?? fromPagerDuty(raw);
+  if (mapped) return normalizeAlert(mapped);
+  return {
+    ok: false,
+    error: "invalid_alert",
+    details: ["expected AlertManager, PagerDuty, or canonical (service_name+target_host) webhook shape"],
+  };
+}
+
 export type IncidentStatus =
   | "diagnosing"
   | "awaiting_approval"

@@ -16,7 +16,7 @@ import { INCIDENT_RESPONDER_PROMPT, SAFETY_POLICY } from "./trueforge-config";
 import {
   createIncident,
   getIncident,
-  normalizeAlert,
+  normalizeWebhook,
   patchIncident,
   setIncidentStatus,
   type NormalizedAlert,
@@ -41,6 +41,7 @@ export type WsEnvelope =
         proposed_command: string;
         proposed_commands: string[];
         safety_badges: SafetyBadge[];
+        diff: string;
       };
     }
   | {
@@ -106,6 +107,11 @@ function computeGateBadges(commands: string[]): SafetyBadge[] {
     name,
     status: commands.some((command) => regex.test(command)) ? "fail" : "pass",
   }));
+}
+
+/** No sandbox state diff yet (blueprint PR #4); `diff` lists every command the gate would authorize. */
+function commandDiff(commands: string[]): string {
+  return commands.map((c) => `+ ${c}`).join("\n");
 }
 
 export interface IncidentRouterOptions {
@@ -207,6 +213,7 @@ export function createIncidentRouter({
                 proposed_command: commands.join("\n"),
                 proposed_commands: commands,
                 safety_badges: badges,
+                diff: commandDiff(commands),
               },
             });
             return; // halt; the approval route resumes the turn
@@ -351,6 +358,7 @@ export function createIncidentRouter({
                 proposed_command: commands.join("\n"),
                 proposed_commands: commands,
                 safety_badges: badges,
+                diff: commandDiff(commands),
               },
             });
             return;
@@ -398,7 +406,7 @@ export function createIncidentRouter({
       res.status(503).json({ error: "trueforge_unconfigured" });
       return;
     }
-    const parsed = normalizeAlert(req.body);
+    const parsed = normalizeWebhook(req.body);
     if (!parsed.ok) {
       res.status(400).json({ error: parsed.error, details: parsed.details });
       return;

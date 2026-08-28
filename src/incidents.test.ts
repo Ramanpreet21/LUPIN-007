@@ -5,6 +5,7 @@ import {
   getIncident,
   INCIDENT_MAX,
   normalizeAlert,
+  normalizeWebhook,
   patchIncident,
   setIncidentStatus,
 } from "./incidents";
@@ -113,6 +114,70 @@ test("TTL sweep expires resolved incidents only; live ones are retained", () => 
 
   assert.equal(getIncident(resolved.id), undefined); // terminal + stale → pruned
   assert.ok(getIncident(live.id)); // awaiting_approval → kept until the cap
+});
+
+test("normalizeWebhook maps Prometheus AlertManager payloads", () => {
+  const result = normalizeWebhook({
+    alerts: [
+      {
+        labels: { alertname: "HighCPU", instance: "prod-db-01:9100", severity: "critical" },
+        annotations: { summary: "prod-db-01 CPU > 80% for 5m", description: "full description" },
+      },
+    ],
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.alert.service_name, "HighCPU");
+  assert.equal(result.alert.target_host, "prod-db-01"); // :port stripped
+  assert.equal(result.alert.severity, "critical");
+  assert.equal(result.alert.alert_summary, "prod-db-01 CPU > 80% for 5m"); // summary wins over description
+});
+
+test("normalizeWebhook maps PagerDuty events-v2 payloads", () => {
+  const result = normalizeWebhook({
+    payload: { source: "db-02.internal", severity: "error", summary: "Postgres down" },
+    service: { name: "postgres", summary: "Postgres cluster" },
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.alert.service_name, "postgres");
+  assert.equal(result.alert.target_host, "db-02.internal");
+  assert.equal(result.alert.severity, "error");
+  assert.equal(result.alert.alert_summary, "Postgres down");
+});
+
+test("normalizeWebhook maps PagerDuty incident webhooks via custom_details.host", () => {
+  const result = normalizeWebhook({
+    event: "incident.triggered",
+    data: {
+      incident: {
+        title: "Node flapping",
+        severity: "warning",
+        service: { name: "nginx-edge", summary: "nginx edge" },
+        custom_details: { host: "lb-01" },
+      },
+    },
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.alert.service_name, "nginx-edge");
+  assert.equal(result.alert.target_host, "lb-01");
+  assert.equal(result.alert.severity, "warning");
+  assert.equal(result.alert.alert_summary, "Node flapping");
+});
+
+test("normalizeWebhook rejects PagerDuty payloads without a host", () => {
+  const result = normalizeWebhook({ payload: { severity: "warning", summary: "no source" } });
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.match(result.details[0], /target_host/);
+});
+
+test("normalizeWebhook rejects unsupported envelopes", () => {
+  const result = normalizeWebhook({ hello: "world" });
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.match(result.details[0], /AlertManager|PagerDuty/);
 });
 
 // Keep this test last: it fills the in-memory store to INCIDENT_MAX.
