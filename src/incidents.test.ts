@@ -239,6 +239,44 @@ test("normalizeWebhooks maps PagerDuty incident webhooks via custom_details.host
   assert.equal(parsed.alert.alert_summary, "Node flapping");
 });
 
+test("normalizeWebhooks maps PagerDuty v3 webhooks via the top-level event object", () => {
+  // PagerDuty's documented webhook v3 envelope: the incident resource lives at
+  // event.data, and event.event_type names the incident lifecycle event.
+  const results = normalizeWebhooks({
+    account: "PagerDuty Account",
+    event: {
+      id: "b1e63870-5f46-11e8-8f45-9d78e8227d0f",
+      event_type: "incident.triggered",
+      resource_type: "incident",
+      occurred_at: "2023-05-12T11:15:34.000-04:00",
+      data: {
+        id: "P13DTTX",
+        incident_number: 123,
+        title: "The server is on fire",
+        severity: "critical",
+        status: "triggered",
+        urgency: "high",
+        created_at: "2023-05-12T11:15:34.000-04:00",
+        service: {
+          id: "PXP42J4",
+          type: "service_reference",
+          summary: "Production Database",
+          self: "https://api.pagerduty.com/services/PXP42J4",
+        },
+        custom_details: { host: "db-primary-01" },
+      },
+    },
+    occurred_at: "2023-05-12T11:15:34.000-04:00",
+  });
+  const parsed = results[0];
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.alert.service_name, "Production Database");
+  assert.equal(parsed.alert.target_host, "db-primary-01");
+  assert.equal(parsed.alert.severity, "critical");
+  assert.equal(parsed.alert.alert_summary, "The server is on fire");
+});
+
 test("normalizeWebhooks rejects PagerDuty payloads without a host", () => {
   const results = normalizeWebhooks({ payload: { severity: "warning", summary: "no source" } });
   assert.equal(results.length, 1);

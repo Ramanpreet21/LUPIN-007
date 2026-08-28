@@ -126,7 +126,7 @@ function fromAlertManager(raw: unknown): Array<Record<string, unknown> | null> |
   });
 }
 
-/** PagerDuty v3 webhook (events v2 payload or incident payload) → canonical alert. */
+/** PagerDuty webhook — Events API v2 payload, or v3 webhook incident payload → canonical alert. */
 function fromPagerDuty(raw: unknown): Record<string, unknown> | null {
   const body = asRecord(raw);
   if (!body) return null;
@@ -144,8 +144,14 @@ function fromPagerDuty(raw: unknown): Record<string, unknown> | null {
       ...(typeof payload.summary === "string" ? { alert_summary: payload.summary } : {}),
     };
   }
-  const data = asRecord(body.data);
-  const incident = asRecord(data && data.incident);
+  // PagerDuty webhooks v3 unwrap through a top-level `event` object whose data
+  // is the incident resource itself; the legacy shape nests it under data.incident
+  // with a bare `event` string sibling. Support both.
+  const event = asRecord(body.event);
+  const data =
+    (event && typeof event.event_type === "string" ? asRecord(event.data) : null) ??
+    asRecord(body.data);
+  const incident = asRecord(data && data.incident) ?? data;
   if (incident) {
     const service = asRecord(incident.service);
     const custom = asRecord(incident.custom_details);
