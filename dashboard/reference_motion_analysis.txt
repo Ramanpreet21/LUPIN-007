@@ -1,0 +1,32 @@
+Starting video analysis...
+Submitting video analysis task...
+Task submitted (ID: video-analysis-69a7b9c5-08fc-4b29-888a-bc66559cfc32)
+[8s] Status: Analyzing video content with AI...
+[15s] Status: Analysis completed
+[15s] Analysis completed!
+Full analysis result saved to: /home/ubuntu/video_pinterest-motion-icons-reference_analysis_20260826_083339.md
+Note: This tool performs AI-based visual and audio analysis, not verbatim transcription. For detailed speech transcription, use `manus-speech-to-text` instead.
+Analysis result:
+
+The motion language of these line icons is characterized by a **fluid, stroke-based "draw-on" aesthetic** that emphasizes construction and pathing. The animation feels organic and deliberate, avoiding the mechanical stiffness of standard UI transitions.
+
+### Primary Animation Patterns
+
+1.  **Path Tracing (Draw-on):** The foundational mechanic. Icons do not simply appear; their vector paths are traced in real-time. For example, a circle begins as a point and extends its circumference until the loop is closed.
+2.  **State Morphing:** Instead of hard cuts, icons transition between states through path manipulation. A "play" triangle might morph its vertices into a "pause" square, or a "closed eye" might smoothly pull its lids apart to reveal the pupil.
+3.  **Elastic Rotation:** Elements that rotate (like gears, refresh symbols, or compass needles) often feature a slight "overshoot" or elastic snap, where they rotate slightly past their target and settle back into place.
+4.  **Staggered Sequencing:** The grid does not animate in unison. There is a subtle top-down, left-to-right stagger (offset by milliseconds), creating a "wave" effect that guides the eye across the interface rather than overwhelming it with simultaneous movement.
+5.  **Pulsing & Breath:** Certain status icons (like the microphone or heart) use a gentle scale-pulse, mimicking a slow respiratory rhythm rather than a rapid blink.
+
+### Pacing and Timing
+The pacing is **leisurely and eased**. It utilizes a "Slow-In, Slow-Out" (Ease-in-out) cubic bezier curve. The initial movement is deceptive and slow, followed by a quick mid-stroke acceleration, ending in a soft, dampened deceleration. This gives the icons a sense of weight and intentionality.
+
+---
+
+### Adaptation: Dark "Liquid Glass" Operational Dashboard
+For a high-stakes, dark-themed operational dashboard, the motion must be even more restrained to prevent "visual noise" while maintaining the premium, tactile feel of Liquid Glass.
+
+*   **The "Viscous Stroke":** Instead of a simple white line drawing on, the animation should resemble a luminous liquid filling a glass etched channel. As the line "draws," the leading edge should be slightly brighter and thicker (a "meniscus" effect), trailing off into the standard line weight.
+*   **Hover-Triggered "Refraction":** In a static state, icons remain at 40% opacity. Upon hover, the icon performs its "draw-on" animation at 100% opacity, accompanied by a subtle, localized glow that mimics light passing through a glass edge.
+*   **Micro-Haptics for Data:** For an operational dashboard, motion should signify change. If a data point updates, the corresponding icon (e.g., a server rack or cloud) should perform a single, fast "ripple" or "shiver"—a quick path-distortion that looks like a vibration through water—before settling back to static.
+*   **Depth Transition:** When an icon is clicked to open a module, the icon shouldn't just disappear. It should "sink" into the Z-axis, scaling down slightly while its blur increases, creating the illusion of the icon receding into the "liquid" depths of the dashboard.

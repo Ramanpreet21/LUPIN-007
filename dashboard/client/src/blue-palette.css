@@ -1,0 +1,264 @@
+/* Ion-blue palette conversion: preserves the original lightness hierarchy while moving mint emphasis to blue. */
+:root {
+  --ring: #6cb8ff;
+  --ion-blue: #6cb8ff;
+  --ion-blue-bright: #a3d1ff;
+  --ion-blue-soft: #d9ebff;
+  --ion-blue-ink: #112b49;
+  --ion-blue-deep: #0f1c2c;
+  --health-panel-border: rgba(223, 237, 249, .16);
+  --health-panel-fill: linear-gradient(142deg, rgba(49, 59, 70, .58), rgba(10, 15, 21, .48));
+  --health-panel-sheen: linear-gradient(123deg, rgba(244, 249, 255, .14), transparent 22%, transparent 70%, rgba(173, 205, 235, .045));
+  --health-inset-fill: rgba(7, 12, 18, .31);
+  --health-inset-border: rgba(211, 228, 243, .12);
+  --health-label: rgba(214, 234, 255, .5);
+  --health-copy: rgba(237, 246, 255, .9);
+}
+
+button:focus-visible,
+input:focus-visible { outline-color: var(--ion-blue); }
+
+/* Make the compact product marks and low-key materials participate in the blue theme. */
+.brand-mark,
+.setup-brand img { filter: hue-rotate(54deg) drop-shadow(0 0 13px rgba(108,184,255,.22)); }
+.ambient-left { background: rgba(105,132,173,.17); }
+.ambient-right { background: rgba(85,157,255,.12); }
+
+/* Navigation, statuses, controls, and the main workspace retain the original emphasis structure. */
+.rail-collapse:hover { background: rgba(108,184,255,.12); color: #c7e4ff; }
+.rail-button.is-active { color: #112a48; background: #d9ebff; box-shadow: 0 0 0 1px rgba(255,255,255,.7), 0 7px 20px rgba(66,141,224,.2); }
+.profile-action-trigger.is-open .profile-orb { box-shadow: inset 1px 1px 0 rgba(255,255,255,.72), 0 0 0 2px rgba(108,184,255,.3), 0 8px 18px rgba(0,0,0,.3); }
+.profile-action-menu button:hover { background: rgba(108,184,255,.12); color: #cee7ff; }
+.notification i,
+.live-dot,
+.card-placement i { background: var(--ion-blue); box-shadow: 0 0 8px var(--ion-blue); }
+.focus-module::after { background: rgba(108,184,255,.22); }
+.mint-text,
+.meter-label { color: var(--ion-blue) !important; }
+.glyph-orbit-one { border-color: rgba(108,184,255,.35); }
+.workspace-edge-handle span { background: #21304b; box-shadow: 0 0 0 3px rgba(108,184,255,.28); }
+.workspace-edge-handle:hover { box-shadow: 0 10px 26px rgba(0,0,0,.45), 0 0 19px rgba(108,184,255,.3), inset 1px 1px 0 rgba(255,255,255,.92); }
+.workspace-input button:hover { box-shadow: 0 0 17px rgba(108,184,255,.3); }
+.cutout-card { background: linear-gradient(142deg, rgba(35,47,65,.78), rgba(10,14,20,.86)); }
+.cutout-card:hover { box-shadow: 0 28px 54px rgba(0,0,0,.43), 0 0 26px rgba(108,184,255,.08), inset 1px 1px 0 rgba(255,255,255,.2); }
+.cutout-card.is-open { background: linear-gradient(142deg, rgba(41,59,87,.82), rgba(10,15,23,.9)); }
+.card-pin.is-pinned { border-color: rgba(108,184,255,.25); color: #a8d5ff; background: rgba(108,184,255,.1); }
+.card-index { border-color: rgba(108,184,255,.32); background: rgba(108,184,255,.1); color: #aad5ff; }
+.card-action:hover { background: #badbff; }
+
+/* Unified health-derived module language: opaque enough to isolate faces, luminous enough to read as one instrument family. */
+.health-flip-back,
+.terminal-module,
+.agent-status-bar,
+.workspace-card,
+.archive-workspace-card .workspace-card,
+.archive-fan-card .workspace-card {
+  border-color: var(--health-panel-border);
+  background: var(--health-panel-fill);
+  box-shadow: 0 20px 50px rgba(0,0,0,.38), inset 1px 1px 0 rgba(255,255,255,.18), inset -1px -1px 0 rgba(255,255,255,.035);
+  color: var(--health-copy);
+}
+.agent-status-bar { background: linear-gradient(142deg, rgba(36,43,52,.5), rgba(8,12,17,.4)); }
+.health-flip-back,
+.terminal-module,
+.agent-status-bar { isolation: isolate; }
+.health-flip-back::before,
+.terminal-module::before,
+.agent-status-bar::before {
+  content: "";
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--health-panel-sheen);
+  pointer-events: none;
+}
+.health-flip-back > *,
+.terminal-module > *,
+.agent-status-bar > * { position: relative; z-index: 5; }
+.health-flip-back::after,
+.terminal-module::after,
+.agent-status-bar::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  right: -34px;
+  bottom: -46px;
+  width: 132px;
+  height: 132px;
+  border: 1px solid rgba(221,235,249,.1);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(174,204,232,.08), transparent 66%);
+  box-shadow: 0 0 32px rgba(174,204,232,.06);
+  pointer-events: none;
+}
+.health-flip-back::after { content: none; }
+.telemetry-meter,
+.log-search,
+.log-pause,
+.log-filter,
+.log-filter-row select,
+.log-terminal,
+.terminal-canvas,
+.agent-connection-strip,
+.agent-engine,
+.agent-skill,
+.workspace-card .topology-canvas,
+.workspace-card .blast-tree,
+.workspace-card .risk-dial,
+.workspace-card .sandbox-identity,
+.workspace-card .sandbox-resources > div {
+  border-color: var(--health-inset-border) !important;
+  background: var(--health-inset-fill);
+  box-shadow: inset 1px 1px 0 rgba(235,247,255,.06), inset 0 1px 10px rgba(0,0,0,.22);
+}
+.telemetry-meter span,
+.log-search,
+.log-pause,
+.log-filter,
+.log-filter-row select,
+.terminal-status,
+.workspace-card .workspace-card-head .eyebrow,
+.workspace-card .workspace-card-head span:not(.workspace-card-state) { color: var(--health-label); }
+.telemetry-meter strong,
+.log-search input,
+.workspace-card .workspace-card-head h2,
+.workspace-card .topology-node text,
+.workspace-card .sandbox-identity strong { color: var(--health-copy); }
+.health-flip-back { backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+/* Let the conversation surface reach the workspace viewport edge rather than sit within a centered, fixed-width column. */
+.conversation-list { width: 100%; max-width: none; margin: 0; padding-inline: 0; }
+@media (max-width: 540px) { .conversation-list { padding-inline: 0; } }
+
+/* Follow the actual clipped notch contour so its corners read as one continuous transition. */
+.workspace-notch-outline { position: absolute; z-index: 4; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.workspace-notch-outline path { fill: none; stroke: rgba(222,232,238,.42); stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; filter: drop-shadow(-4px -4px 12px rgba(239,244,246,.06)); }
+@media (max-width: 840px) { .workspace-notch-outline path { stroke-width: 1.1; } }
+
+/* Health, connection, telemetry, and terminal states. */
+.meter-fill,
+.health-budget-track--safe span,
+.telemetry-meter--safe b,
+.agent-context-track--safe i,
+.health-resource-meter--safe b { background: linear-gradient(90deg, #5b9fd8, #a3d1ff); box-shadow: 0 0 12px rgba(108,184,255,.63); }
+.health-summary-card { --health-accent: var(--ion-blue); }
+.health-zero-state { border-color: rgba(108,184,255,.16); background: rgba(108,184,255,.06); color: #a9d6ff; }
+.health-flip-button:hover { background: rgba(108,184,255,.16); color: #d0e9ff; }
+.log-pause.is-live { border-color: rgba(108,184,255,.3); background: rgba(108,184,255,.12); color: #c2e1ff; }
+.log-terminal { scrollbar-color: rgba(108,184,255,.35) transparent; }
+.log-line--info b { color: #a6d4ff; }
+.terminal-status--connected { color: #a7d5ff; }
+.terminal-status--connected i,
+.agent-ssh-dot--connected,
+.agent-execution-state.is-executing::before { background: var(--ion-blue); box-shadow: 0 0 8px rgba(108,184,255,.75); }
+.terminal-canvas .xterm-viewport::-webkit-scrollbar-thumb { background: rgba(108,184,255,.22); }
+.agent-status-bar { --agent-accent: var(--ion-blue); background: linear-gradient(142deg, rgba(29,41,61,.82), rgba(9,13,21,.9)); }
+.agent-connection-strip em { color: #9ec7f5; }
+.agent-ssh-menu-content button:hover { background: rgba(108,184,255,.11); color: #badbff; }
+.agent-engine span { color: #b9d9f8; }
+.agent-skill--executing,
+.agent-execution-state.is-executing { color: #a7d5ff; }
+.agent-skill.is-active { border-color: rgba(108,184,255,.35); background: rgba(108,184,255,.1); color: #c6e2ff; }
+.agent-sandbox-pill svg { color: #8fc2f2; }
+
+/* Overlay panels and dialogs receive blue-tinted surfaces, selection states, and focus treatments. */
+.management-dialog-header { background: linear-gradient(120deg, rgba(108,184,255,.07), transparent 50%); }
+.management-dialog-close:hover { background: rgba(108,184,255,.13); color: #c7e2ff; }
+.management-tabbar button.is-active { border-color: rgba(108,184,255,.25); background: rgba(108,184,255,.11); color: #bdddff; }
+.settings-summary-card > svg,
+.settings-section-heading > svg { color: #9ecbff; }
+.settings-summary-card b,
+.connection-row em,
+.skill-management-row em,
+.ssh-connection-title em { color: #aad4ff; }
+.settings-inline-actions button:hover,
+.row-action-group button:hover,
+.connection-row button:hover,
+.skill-management-row button:hover,
+.ssh-connection-actions button:hover,
+.management-add-button:hover { border-color: rgba(108,184,255,.3); background: rgba(108,184,255,.12); color: #c9e4ff; }
+.skill-management-row button.is-selected { border-color: rgba(108,184,255,.32); background: rgba(108,184,255,.12); color: #bfe0ff; }
+.management-notice { border-color: rgba(108,184,255,.22); background: rgba(108,184,255,.08); color: #b8d9ff; }
+.ssh-connection-dot.is-live { background: #71b6eb; box-shadow: 0 0 9px rgba(108,184,255,.75); }
+
+/* Conversation and first-run flow use blue in their live and selected states. */
+.conversation-viewport,
+.notch-popup-card { scrollbar-color: rgba(108,184,255,.35) transparent; }
+.conversation-viewport::-webkit-scrollbar-thumb { background: rgba(108,184,255,.3); }
+.conversation-message--assistant { border: 0; background: transparent; box-shadow: none; }
+.conversation-message--user { background: linear-gradient(135deg, rgba(208,227,252,.16), rgba(74,106,148,.16)); }
+.conversation-message--system { border-color: rgba(108,184,255,.16); background: rgba(108,184,255,.055); }
+.conversation-message-meta span,
+.notch-popup-trigger svg { color: #a8d3ff; }
+.conversation-message--system p { color: rgba(206,226,255,.72); }
+.assistant-brand-mark { width: 12px; height: 12px; object-fit: contain; filter: drop-shadow(0 0 5px rgba(108,184,255,.4)); }
+.notch-popup-actions button:first-child,
+.workspace-popup-actions button:first-child { border-color: rgba(108,184,255,.28); background: rgba(108,184,255,.12); color: #b9dcff; }
+.workspace-backend-popup { background: linear-gradient(135deg, rgba(45,57,76,.9), rgba(14,19,30,.94)); }
+.conversation-message--assistant .conversation-message-meta { border-bottom-color: rgba(108,184,255,.14); }
+
+.setup-progress-rail { background: linear-gradient(165deg, rgba(108,184,255,.09), rgba(12,16,27,.05) 42%, rgba(0,0,0,.12)); }
+.setup-instrument-frame::before { background: radial-gradient(circle at 17% 11%, rgba(108,184,255,.14), transparent 25%), radial-gradient(circle at 87% 76%, rgba(98,164,255,.075), transparent 30%); }
+.setup-progress-rail::after { background: linear-gradient(180deg, transparent, rgba(108,184,255,.55), transparent); box-shadow: 0 0 14px rgba(108,184,255,.42); }
+.setup-content-panel::before { border-color: rgba(108,184,255,.55); box-shadow: 0 0 0 4px rgba(108,184,255,.045), 0 0 18px rgba(108,184,255,.32); }
+.setup-content-panel::after { background: var(--ion-blue); box-shadow: 0 0 8px rgba(108,184,255,.92); }
+.setup-step-panel::after { box-shadow: inset 1px 1px 0 rgba(255,255,255,.12), 0 0 18px rgba(108,184,255,.11); }
+.setup-step-panel::before { background: var(--ion-blue); box-shadow: 0 0 9px rgba(108,184,255,.84); }
+.setup-launch-card { color: rgba(229,238,252,.52); }
+.setup-launch-card:hover,
+.setup-launch-card.is-selected { border-color: rgba(108,184,255,.43); background: linear-gradient(130deg, rgba(108,184,255,.14), rgba(22,37,61,.24)); box-shadow: inset 1px 1px 0 rgba(255,255,255,.18), inset -1px -1px 0 rgba(0,0,0,.18), 0 0 25px rgba(108,184,255,.09); color: #c9e2ff; }
+.setup-launch-card small { color: rgba(226,236,252,.5); }
+.setup-option-icon { border-color: rgba(108,184,255,.24); background: rgba(108,184,255,.1); color: #aad5ff; }
+.setup-runtime-pill { border-color: rgba(108,184,255,.24); background: linear-gradient(112deg, rgba(108,184,255,.11), rgba(255,255,255,.025)); box-shadow: inset 1px 1px 0 rgba(255,255,255,.11), inset -1px -1px 0 rgba(0,0,0,.18), 0 0 22px rgba(108,184,255,.06); color: rgba(216,231,255,.76); }
+.setup-runtime-pill > span { background: #77b8ea; box-shadow: 0 0 10px rgba(108,184,255,.68); }
+.setup-test-button { border-color: rgba(108,184,255,.35); background: rgba(108,184,255,.1); color: #c4dfff; }
+.setup-test-button:hover { background: rgba(108,184,255,.18); }
+.setup-model-keys-trigger:hover { border-color: rgba(108,184,255,.25); background: rgba(108,184,255,.07); }
+.setup-model-keys-trigger svg { color: #9fcaff; }
+.setup-secret-field button { color: rgba(216,231,255,.66); }
+.setup-secret-field button:hover { background: rgba(108,184,255,.1); color: #badcff; }
+.setup-test-result.is-success { color: #a8d1f5; }
+.setup-security-note { border-color: rgba(108,184,255,.16); background: rgba(108,184,255,.055); color: rgba(216,230,252,.64); }
+.setup-security-note svg { color: #9fcaff; }
+.setup-security-note strong { color: #c7e1fb; }
+.setup-step-list li > span svg:last-child { background: #0d1726; color: #98d0ff; }
+.setup-step-list li.is-current { border-color: rgba(108,184,255,.2); background: rgba(108,184,255,.08); color: #cae3ff; }
+.setup-step-list li.is-current > span { border-color: rgba(108,184,255,.35); background: rgba(108,184,255,.12); }
+.setup-step-list li.is-complete { color: rgba(218,232,255,.7); }
+.setup-step-list li.is-complete > span,
+.setup-rail-foot svg { color: #9ccfff; }
+.setup-step-title > span { border-color: rgba(108,184,255,.24); background: rgba(108,184,255,.08); color: #aad5ff; }
+.setup-field input:focus { border-color: rgba(108,184,255,.52); box-shadow: 0 0 0 3px rgba(108,184,255,.1); }
+.setup-mode-field button.is-selected,
+.setup-approval-field button.is-selected { border-color: rgba(108,184,255,.36); background: rgba(108,184,255,.1); color: #c9e3ff; }
+.setup-mode-field button.is-selected > svg,
+.setup-approval-field button.is-selected > svg { color: #9fcaff; }
+.setup-target-card { border-color: rgba(108,184,255,.18); background: linear-gradient(125deg, rgba(108,184,255,.1), rgba(255,255,255,.03)); }
+.setup-target-dot { background: #76b7ed; box-shadow: 0 0 11px rgba(108,184,255,.72); }
+.setup-inline-note svg { color: #a5cfff; }
+.setup-notification-list input:checked + span { border-color: rgba(108,184,255,.28); background: rgba(108,184,255,.08); color: #a9d3ff; }
+.setup-footer > span b { color: #b8ddff; }
+.setup-next-button { border-color: rgba(180,217,255,.45); background: linear-gradient(135deg, #d7eaff, #9fc5eb); color: #113052; box-shadow: 0 7px 16px rgba(37,126,205,.15), inset 1px 1px 0 rgba(255,255,255,.7); }
+.setup-next-button:hover { background: #c2deff; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .rail-button:hover svg,
+  .rail-button:focus-visible svg,
+  .rail-collapse:hover svg,
+  .rail-collapse:focus-visible svg,
+  .health-flip-button:hover svg,
+  .health-flip-button:focus-visible svg,
+  .agent-skill:hover svg,
+  .agent-skill:focus-visible svg,
+  .agent-approval-switch:hover svg,
+  .agent-approval-switch:focus-visible svg,
+  .agent-stop-button:hover svg,
+  .agent-stop-button:focus-visible svg,
+  .health-resource-meter:hover svg,
+  .health-resource-meter:focus-visible svg { filter: drop-shadow(0 0 5px rgba(108,184,255,.65)); }
+}
+@keyframes agent-active-glow { from { box-shadow: 0 0 0 rgba(108,184,255,0); } to { box-shadow: 0 0 13px rgba(108,184,255,.22); } }
+@keyframes luma-icon-breath { 0%,100% { filter: drop-shadow(0 0 0 rgba(108,184,255,0)); } 50% { filter: drop-shadow(0 0 6px rgba(108,184,255,.7)); } }
+
+@media (max-width: 540px) { .assistant-brand-mark { width: 9px; height: 9px; } }

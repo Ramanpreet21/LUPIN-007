@@ -1,0 +1,51 @@
+/* Incident deck · live approval surface wired to the incident plane (blueprint §7). */
+.incident-deck { display: flex; min-height: 0; flex-direction: column; gap: 10px; padding: 17px; border-radius: 21px; }
+.incident-deck-heading { min-height: 20px; }
+.deck-status { display: inline-flex; align-items: center; gap: 5px; color: rgba(231,240,236,.52); font-family: "DM Mono", monospace; font-size: 7px; letter-spacing: .08em; text-transform: uppercase; }
+.deck-status i { width: 5px; height: 5px; border-radius: 50%; background: #7a8580; }
+.deck-status--connected { color: #a7f9df; }.deck-status--connected i { background: #6cf3c9; box-shadow: 0 0 8px rgba(108,243,201,.75); }
+.deck-status--connecting { color: #f8cf88; }.deck-status--connecting i { background: #f8bf61; }
+.deck-status--error, .deck-status--disconnected { color: #ff9d9d; }.deck-status--error i, .deck-status--disconnected i { background: #ff6e77; box-shadow: 0 0 8px rgba(255,110,119,.65); }
+
+.incident-deck-empty { margin: 0; padding: 14px 12px; border: 1px dashed rgba(255,255,255,.12); border-radius: 12px; color: rgba(235,246,241,.5); font-family: "DM Mono", monospace; font-size: 8px; text-align: center; }
+
+.incident-list { position: relative; z-index: 5; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; padding: 1px; scrollbar-width: thin; scrollbar-color: rgba(108,243,201,.35) transparent; }
+.incident-card { display: flex; min-width: 0; flex-direction: column; gap: 7px; padding: 10px 11px; border: 1px solid rgba(255,255,255,.13); border-radius: 13px; background: rgba(3,9,10,.38); }
+.incident-card--awaiting_approval { border-color: rgba(248,190,103,.42); background: rgba(248,190,103,.08); }
+.incident-card--failed { border-color: rgba(255,111,120,.35); }
+.incident-card--completed { border-color: rgba(108,243,201,.28); }
+.incident-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.incident-id { overflow: hidden; color: #b9ffe5; font-family: "DM Mono", monospace; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.incident-status { font-family: "DM Mono", monospace; font-size: 7px; font-style: normal; letter-spacing: .07em; text-transform: uppercase; color: rgba(238,247,243,.5); }
+.incident-status--awaiting_approval { color: #ffd48e; }
+.incident-status--completed, .incident-status--approved { color: #a7f9df; }
+.incident-status--failed { color: #ffb0b5; }
+.incident-status--rejected { color: #ff9d9d; }
+.incident-thought { overflow: hidden; min-width: 0; margin: 0; color: rgba(234,247,241,.6); font-size: 9px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+
+.approval-panel { display: flex; min-width: 0; flex-direction: column; gap: 8px; }
+.approval-commands { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.approval-commands code { overflow: hidden; padding: 5px 7px; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; background: rgba(2,8,9,.5); color: #ffe0a8; font-family: "DM Mono", monospace; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.approval-diff { position: relative; z-index: 6; max-height: 96px; margin: 0; overflow: auto; padding: 8px; border: 1px solid rgba(108,243,201,.18); border-radius: 9px; background: rgba(3,10,9,.5); color: #baffea; font-family: "DM Mono", monospace; font-size: 8px; line-height: 1.5; white-space: pre; }
+.approval-badges { display: flex; flex-wrap: wrap; gap: 5px; }
+.safety-badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; border: 1px solid rgba(255,255,255,.14); border-radius: 7px; font-family: "DM Mono", monospace; font-size: 7px; letter-spacing: .04em; text-transform: uppercase; }
+.safety-badge--pass { color: #9df0cf; border-color: rgba(108,243,201,.3); background: rgba(108,243,201,.08); }
+.safety-badge--fail { color: #ffd48e; border-color: rgba(248,190,103,.4); background: rgba(248,190,103,.1); }
+.approval-error { margin: 0; color: #ffb0b5; font-size: 8px; }
+.approval-actions { display: flex; gap: 7px; }
+.approval-button { display: inline-flex; align-items: center; justify-content: center; flex: 1; gap: 5px; padding: 8px 10px; border: 1px solid rgba(255,255,255,.18); border-radius: 9px; background: rgba(255,255,255,.045); color: rgba(238,248,243,.8); cursor: pointer; font-family: "DM Mono", monospace; font-size: 8px; font-weight: 700; transition: transform .16s cubic-bezier(.23,1,.32,1), background-color .16s ease, box-shadow .16s ease, opacity .16s ease; text-transform: uppercase; }
+.approval-button:hover:not(:disabled) { transform: translateY(-1px); }
+.approval-button:disabled { cursor: wait; opacity: .55; }
+.approval-button--approve { border-color: rgba(108,243,201,.42); background: rgba(108,243,201,.14); color: #c9ffe9; }
+.approval-button--approve:hover:not(:disabled) { background: rgba(108,243,201,.24); box-shadow: 0 0 16px rgba(108,243,201,.22); }
+.approval-button--reject { border-color: rgba(255,111,120,.4); background: rgba(255,111,120,.12); color: #ffcdd0; }
+.approval-button--reject:hover:not(:disabled) { background: rgba(255,111,120,.22); box-shadow: 0 0 16px rgba(255,111,120,.18); }
+
+@media (max-width: 840px) {
+  .incident-deck { grid-column: 1 / -1; grid-row: auto; min-height: 194px; padding: 14px; border-radius: 18px; }
+  .approval-diff { max-height: 72px; }
+}
+@media (max-width: 540px) {
+  .incident-deck { grid-column: 1 / -1; grid-row: auto; min-height: 176px; padding: 12px; }
+  .approval-actions { flex-direction: column; }
+}
