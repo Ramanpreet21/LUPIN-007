@@ -121,7 +121,10 @@ function fromAlertManager(
   return body.alerts.map((alertRaw) => {
     const alert = asRecord(alertRaw);
     if (!alert) return null;
-    if (alert.status === "resolved" || body.status === "resolved") {
+    // Per-alert `status` is authoritative: an explicitly-firing member stays
+    // active even inside a resolved group; only members that say resolved (or
+    // omit a status under a resolved group) become no-ops.
+    if (alert.status === "resolved" || (alert.status !== "firing" && body.status === "resolved")) {
       return { status: "resolved" };
     }
     const labels = asRecord(alert.labels) ?? {};
@@ -144,40 +147,61 @@ function fromAlertManager(
   });
 }
 
-/** PagerDuty webhook — Events API v2 payload, or v3 webhook incident payload → canonical alert. */
-function fromPagerDuty(raw: unknown): Record<string, unknown> | null {
+/** PagerDuty webhook — Events API v2 payload, or v3 webhook incident payload → canonical alert.
+ * Resolved lifecycle events map to { resolved: true } so the caller skips incident creation. */
+function fromPagerDuty(
+  raw: unknown,
+):
+  | { alert: Record<string, unknown> }
+  | { resolved: true }
+  | null {
   const body = asRecord(raw);
   if (!body) return null;
   const payload = asRecord(body.payload);
   if (payload && (payload.severity || payload.source || payload.summary)) {
+    if (body.event_action === "resolve") return { resolved: true };
     const service = asRecord(body.service);
     return {
-      target_host: pickString(payload, "source"),
-      // Standard Events API v2 carries no top-level `service` object; component /
-      // group under `payload` are the standard service-name proxies. A legacy
-      // top-level `service` object still wins when one is present.
-      service_name:
-        pickString(service, "name", "summary") ?? pickString(payload, "component", "group"),
-      severity: payload.severity,
-      ...(typeof payload.summary === "string" ? { alert_summary: payload.summary } : {}),
+      alert: {
+        target_host: pickString(payload, "source"),
+        // Standard Events API v2 carries no top-level `service` object; component /
+        // group under `payload` are the standard service-name proxies. A legacy
+        // top-level `service` object still wins when one is present.
+        service_name:
+          pickString(service, "name", "summary") ?? pickString(payload, "component", "group"),
+        severity: payload.severity,
+        ...(typeof payload.summary === "string" ? { alert_summary: payload.summary } : {}),
+      },
     };
   }
   // PagerDuty webhooks v3 unwrap through a top-level `event` object whose data
   // is the incident resource itself; the legacy shape nests it under data.incident
   // with a bare `event` string sibling. Support both.
   const event = asRecord(body.event);
-  const data =
-    (event && typeof event.event_type === "string" ? asRecord(event.data) : null) ??
-    asRecord(body.data);
+  // The legacy envelope encodes the lifecycle event as a bare top-level string
+  // (event: "incident.resolved" with data.incident nested); the v3 object form
+  // carries event.event_type. Resolution must be recognized from either.
+  const eventType =
+    (event && typeof event.event_type === "string" ? event.event_type : undefined) ??
+    (typeof body.event === "string" ? body.event : undefined);
+  const data = (event && eventType ? asRecord(event.data) : null) ?? asRecord(body.data);
   const incident = asRecord(data && data.incident) ?? data;
   if (incident) {
+    // Resolution lifecycle events must not spawn diagnosis: a resolved incident
+    // (v3 event_type incident.resolved, a resolved incident resource — incl. the
+    // legacy shape) is acknowledged, never re-diagnosed as a fresh incident.
+    if (eventType === "incident.resolved" || incident.status === "resolved") {
+      return { resolved: true };
+    }
     const service = asRecord(incident.service);
     const custom = asRecord(incident.custom_details);
     return {
-      target_host: pickString(custom, "host", "target_host", "instance") ?? pickString(incident, "source", "host"),
-      service_name: pickString(service, "name", "summary"),
-      severity: incident.severity,
-      ...(typeof incident.title === "string" ? { alert_summary: incident.title } : {}),
+      alert: {
+        target_host: pickString(custom, "host", "target_host", "instance") ?? pickString(incident, "source", "host"),
+        service_name: pickString(service, "name", "summary"),
+        severity: incident.severity,
+        ...(typeof incident.title === "string" ? { alert_summary: incident.title } : {}),
+      },
     };
   }
   return null;
@@ -210,7 +234,12 @@ export function normalizeWebhooks(raw: unknown): AlertParseResult[] {
     });
   }
   const pager = fromPagerDuty(raw);
-  if (pager) return [normalizeAlert(pager)];
+  if (pager) {
+    if ("resolved" in pager) {
+      return [{ ok: false, error: "resolved_alert", details: [], resolved: true }];
+    }
+    return [normalizeAlert(pager.alert)];
+  }
   return [
     {
       ok: false,

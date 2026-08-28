@@ -197,6 +197,27 @@ test("normalizeWebhooks treats a resolved group notification as a no-op for ever
   }
 });
 
+test("normalizeWebhooks honors an explicit firing member inside a resolved group", () => {
+  const results = normalizeWebhooks({
+    status: "resolved",
+    alerts: [
+      {
+        status: "firing",
+        labels: { alertname: "HighCPU", instance: "prod-db-01:9100", severity: "critical" },
+        annotations: { summary: "prod-db-01 CPU still high" },
+      },
+    ],
+  });
+  assert.equal(results.length, 1);
+  const parsed = results[0];
+  // The per-alert `firing` status is authoritative over the group `resolved`:
+  // a still-firing member must be accepted and diagnosed, not treated as a no-op.
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.alert.service_name, "HighCPU");
+  assert.equal(parsed.alert.target_host, "prod-db-01");
+});
+
 test("normalizeWebhooks keeps a mixed batch: only firing alerts become incidents", () => {
   const results = normalizeWebhooks({
     alerts: [
@@ -329,6 +350,76 @@ test("normalizeWebhooks maps PagerDuty v3 webhooks via the top-level event objec
   assert.equal(parsed.alert.target_host, "db-primary-01");
   assert.equal(parsed.alert.severity, "critical");
   assert.equal(parsed.alert.alert_summary, "The server is on fire");
+});
+
+test("normalizeWebhooks skips resolved PagerDuty v3 webhooks", () => {
+  const results = normalizeWebhooks({
+    account: "PagerDuty Account",
+    event: {
+      id: "b1e63870-5f46-11e8-8f45-9d78e8227d0f",
+      event_type: "incident.resolved",
+      resource_type: "incident",
+      occurred_at: "2023-05-12T11:30:00.000-04:00",
+      data: {
+        id: "P13DTTX",
+        incident_number: 123,
+        title: "The server is on fire",
+        severity: "critical",
+        status: "resolved",
+        urgency: "high",
+        created_at: "2023-05-12T11:15:34.000-04:00",
+        service: {
+          id: "PXP42J4",
+          type: "service_reference",
+          summary: "Production Database",
+          self: "https://api.pagerduty.com/services/PXP42J4",
+        },
+        custom_details: { host: "db-primary-01" },
+      },
+    },
+    occurred_at: "2023-05-12T11:30:00.000-04:00",
+  });
+  const parsed = results[0];
+  assert.equal(parsed.ok, false);
+  if (parsed.ok) return;
+  assert.equal(parsed.resolved, true);
+});
+
+test("normalizeWebhooks skips PagerDuty events-v2 resolve actions", () => {
+  const results = normalizeWebhooks({
+    event_action: "resolve",
+    payload: {
+      source: "db-02.internal",
+      severity: "error",
+      summary: "Postgres down",
+      component: "postgres",
+    },
+  });
+  const parsed = results[0];
+  assert.equal(parsed.ok, false);
+  if (parsed.ok) return;
+  assert.equal(parsed.resolved, true);
+});
+
+test("normalizeWebhooks skips legacy PagerDuty string-event webhooks even without a resolved status", () => {
+  // Legacy envelopes name the lifecycle event as a bare top-level string, and
+  // the embedded incident may omit status: the event name alone must mark it
+  // resolved, not the incident resource's status.
+  const results = normalizeWebhooks({
+    event: "incident.resolved",
+    data: {
+      incident: {
+        title: "Node flapping",
+        severity: "warning",
+        service: { name: "nginx-edge", summary: "nginx edge" },
+        custom_details: { host: "lb-01" },
+      },
+    },
+  });
+  const parsed = results[0];
+  assert.equal(parsed.ok, false);
+  if (parsed.ok) return;
+  assert.equal(parsed.resolved, true);
 });
 
 test("normalizeWebhooks rejects PagerDuty payloads without a host", () => {

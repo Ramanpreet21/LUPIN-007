@@ -256,6 +256,49 @@ test("POST /alerts accepts firing entries and reports resolved ones in mixed bat
   }
 });
 
+test("POST /alerts acknowledges resolved PagerDuty v3 webhooks without creating incidents", async () => {
+  const fake = makeFakeHandle([], []);
+  const server = await withServer(fake.handle);
+  try {
+    const res = await postJson(
+      `http://127.0.0.1:${server.port}/alerts`,
+      JSON.stringify({
+        account: "PagerDuty Account",
+        event: {
+          id: "b1e63870-5f46-11e8-8f45-9d78e8227d0f",
+          event_type: "incident.resolved",
+          resource_type: "incident",
+          occurred_at: "2023-05-12T11:30:00.000-04:00",
+          data: {
+            id: "P13DTTX",
+            title: "The server is on fire",
+            severity: "critical",
+            status: "resolved",
+            service: {
+              id: "PXP42J4",
+              type: "service_reference",
+              summary: "Production Database",
+            },
+            custom_details: { host: "db-primary-01" },
+          },
+        },
+      }),
+    );
+    assert.equal(res.status, 202);
+    const body = (await res.json()) as {
+      status: string;
+      resolved: number;
+      incident_ids?: string[];
+    };
+    // A resolved webhook must not spawn diagnosis: acknowledge, create nothing.
+    assert.equal(body.status, "acknowledged");
+    assert.equal(body.resolved, 1);
+    assert.equal(body.incident_ids, undefined);
+  } finally {
+    await server.close();
+  }
+});
+
 test("alert → reasoning → approval gate → approve → execution_complete success", async () => {
   const fake = makeFakeHandle(diagnosisGateStream(), doneStream("done"));
   const server = await withServer(fake.handle);
