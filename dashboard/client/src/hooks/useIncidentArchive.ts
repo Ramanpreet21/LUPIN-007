@@ -108,7 +108,8 @@ export function useIncidentArchive(pollMs = 10_000) {
     return incidents
       .filter((incident) => {
         if (severity !== "ALL" && severityOf(incident) !== severity) return false;
-        const haystack = [incident.id, incident.alert?.service_name, incident.alert?.target_host].join(" ").toLowerCase();
+        // Search the displayed title too: alert_summary is what mapIncident shows (qodo #2).
+        const haystack = [incident.id, incident.alert?.service_name, incident.alert?.target_host, incident.alert?.alert_summary].join(" ").toLowerCase();
         if (needle && !haystack.includes(needle)) return false;
         const created = incident.createdAt ? Date.parse(incident.createdAt) : NaN;
         return !Number.isFinite(created) || now - created <= cutoffMs;

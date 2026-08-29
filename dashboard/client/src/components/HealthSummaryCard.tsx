@@ -51,7 +51,9 @@ export function HealthSummaryCard({ data, isLoading = false, error = null }: Hea
     );
   }
 
-  const isOk = data.status === "ok";
+  // /health always reports server liveness as status: "ok"; TrueForge readiness
+  // is separate, so an offline provider must tone the card Degraded too (qodo #1).
+  const isOk = data.status === "ok" && data.trueforge_ready;
   const statusTone = isOk ? "healthy" : "degraded";
 
   return (
