@@ -18,44 +18,30 @@ export const TOOL_NAMES = [
 /**
  * Build the URL TrueForge should use to reach the local MCP provider.
  *
- * Topology logic (finding #18):
- *   - TrueForge is "local" when its base URL names localhost/127.0.0.1 —
- *     in that case we advertise 127.0.0.1 so it can reach us directly.
- *   - TrueForge is "remote" when its base URL names a real hostname/IP
- *     (separate host or container). TrueForge must advertise a URL it can
- *     actually dial, so we use the hostname from TRUEFORGE_BASE_URL as
- *     the MCP URL host. The control plane must be reachable at that
- *     hostname from TrueForge's network location.
+ * Topology logic:
+ *   - CONTROL_PLANE_URL is set → use it directly as the MCP base URL.
+ *     This is the only way to correctly handle remote/containerized deployments
+ *     because it is the only config that names the control plane's externally
+ *     reachable address (not TrueForge's).
+ *   - Otherwise → same-host deployment; advertise loopback.
  *
  * Ephemeral-port note: callers MUST pass the actual bound port (from
  * server.address().port after listen()), not the configured port, so
  * PORT=0 works correctly (finding #3).
  */
 export function buildLocalMcpUrl(
-  host: string,
   port: number,
-  trueforgeBaseUrl?: string,
+  controlPlaneUrl?: string,
 ): string {
-  const loopback =
-    host === "" || host === "0.0.0.0" || host === "::" || host === "127.0.0.1";
-
-  let mcpHost: string;
-  if (loopback && trueforgeBaseUrl) {
-    // TrueForge is on a separate host — use TrueForge's own hostname so it
-    // can route back to us. If the URL is http://tf.internal:8790 we want
-    // the MCP at http://tf.internal:<port>/mcp.
+  if (controlPlaneUrl) {
     try {
-      const tfUrl = new URL(trueforgeBaseUrl);
-      mcpHost = tfUrl.hostname;
+      const base = new URL(controlPlaneUrl);
+      return `${base.origin}/mcp`;
     } catch {
-      mcpHost = "127.0.0.1";
+      // Invalid URL — fall back to loopback.
     }
-  } else {
-    // TrueForge is local (or no URL): advertise loopback.
-    mcpHost = "127.0.0.1";
   }
-
-  return `http://${mcpHost}:${port}/mcp`;
+  return `http://127.0.0.1:${port}/mcp`;
 }
 
 const PROTOCOL_VERSION = "2025-03-26";

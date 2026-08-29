@@ -106,7 +106,7 @@ async function main(): Promise<void> {
     getTf: () => tf,
     logger,
     model: config.trueforgeModel,
-    mcpUrl: buildLocalMcpUrl(config.host, server.port, config.trueforgeBaseUrl),
+    mcpUrl: buildLocalMcpUrl(server.port, config.controlPlaneUrl),
   });
 
   let closing = false;

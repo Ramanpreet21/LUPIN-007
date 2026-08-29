@@ -2,8 +2,18 @@ export interface AppConfig {
   host: string;
   port: number;
   logLevel: string;
+  /** TrueForge harness base URL (e.g. http://localhost:8790). */
   trueforgeBaseUrl?: string;
+  /** Auth token for TrueForge. */
   trueforgeToken?: string;
+  /**
+   * Control plane's externally reachable base URL.
+   * When set, used as the MCP callback URL so TrueForge (even on a separate
+   * host/container) can reach the /mcp endpoint. Example:
+   *   http://cp.example.com  →  http://cp.example.com/mcp
+   * If omitted the MCP URL is derived from bind address (same-host only).
+   */
+  controlPlaneUrl?: string;
   /** Model FQN (provider/model) used for sandbox-enabled incident sessions. */
   trueforgeModel: string;
 }
@@ -40,6 +50,7 @@ export function loadConfig(env: NodeJS.ProcessEnv, cli: CliOptions = {}): AppCon
     logLevel,
     trueforgeBaseUrl: env.TRUEFORGE_BASE_URL || undefined,
     trueforgeToken: env.TRUEFORGE_TOKEN || undefined,
+    controlPlaneUrl: env.CONTROL_PLANE_URL || undefined,
     trueforgeModel: env.TRUEFORGE_MODEL || DEFAULT_TRUEFORGE_MODEL,
   };
 }
