@@ -63,6 +63,8 @@ export interface FirstRunSetupProps {
   onTestConnection?: (ssh: SSHConfig) => Promise<{ success: boolean; message: string }>;
   /** Configure the live sandbox provider (PR #4 4a) before the controlled flow needs it. */
   onConfigureSandbox?: (apiKey: string) => Promise<{ ok: boolean; status?: string; message: string }>;
+  /** Configure the model key for TrueForge sessions (PR #5 5a) before the controlled flow needs it. */
+  onConfigureModel?: (apiKey: string) => Promise<{ ok: boolean; status?: string; message: string }>;
   /** Runtime discovery text supplied by a future local agent bridge. */
   detectedRuntimeStatus?: string;
   className?: string;
@@ -155,6 +157,7 @@ export function FirstRunSetup({
   onComplete,
   onTestConnection,
   onConfigureSandbox,
+  onConfigureModel,
   detectedRuntimeStatus = "Podman socket: /run/user/1000/podman/podman.sock · READY",
   className = "",
 }: FirstRunSetupProps) {
@@ -165,6 +168,7 @@ export function FirstRunSetup({
   const [sandboxVisible, setSandboxVisible] = useState(false);
   const [sandboxKey, setSandboxKey] = useState("");
   const [sandboxCheck, setSandboxCheck] = useState<{ state: "idle" | "testing" | "success" | "error"; message: string }>({ state: "idle", message: "" });
+  const [modelCheck, setModelCheck] = useState<{ state: "idle" | "testing" | "success" | "error"; message: string }>({ state: "idle", message: "" });
   const [connectionCheck, setConnectionCheck] = useState<{ state: "idle" | "testing" | "success" | "error"; message: string }>({ state: "idle", message: "" });
   const { form, setForm, update, updateSsh, updateModelKey, updateNotifications } = useFirstRunFormState();
 
@@ -204,6 +208,15 @@ export function FirstRunSetup({
       : await new Promise<{ ok: boolean; message: string }>((resolve) => window.setTimeout(() => resolve({ ok: true, message: "Mock sandbox provider key accepted. A backend callback can replace this configure step." }), 650));
     setSandboxCheck({ state: result.ok ? "success" : "error", message: result.message });
   };
+  const saveModel = async () => {
+    const apiKey = form.modelKeys.apiKey?.trim();
+    if (!apiKey) return;
+    setModelCheck({ state: "testing", message: "Contacting the model provider…" });
+    const result = onConfigureModel
+      ? await onConfigureModel(apiKey)
+      : await new Promise<{ ok: boolean; message: string }>((resolve) => window.setTimeout(() => resolve({ ok: true, message: "Mock model key accepted for TrueForge sessions. A backend callback can replace this configure step." }), 650));
+    setModelCheck({ state: result.ok ? "success" : "error", message: result.message });
+  };
 
   return (
     <main className={`first-run-setup ${className}`.trim()} aria-label="Lupin first-run setup">
@@ -238,6 +251,7 @@ export function FirstRunSetup({
               <label className="setup-field"><span>User / key path</span><input value={form.ssh.userKeyPath} onChange={(event) => updateSsh("userKeyPath", event.target.value)} placeholder="~/.ssh/id_rsa" autoComplete="off" /></label>
               <div className="setup-test-row"><button type="button" className="setup-test-button" onClick={() => void testConnection()} disabled={connectionCheck.state === "testing"}>{connectionCheck.state === "testing" ? "Testing connection…" : "Test connection"}</button>{connectionCheck.state !== "idle" && <span className={`setup-test-result is-${connectionCheck.state}`} aria-live="polite">{connectionCheck.message}</span>}</div>
               <section className="setup-model-keys" aria-label="Model configuration"><button type="button" className="setup-model-keys-trigger" onClick={() => setModelsExpanded((value) => !value)} aria-expanded={modelsExpanded}><span><KeyRound size={15} /><strong>Model configuration</strong><small>Optional local session configuration</small></span><ChevronDown size={15} /></button>{modelsExpanded && <div className="setup-model-keys-body"><label className="setup-field"><span>API key</span><span className="setup-secret-field"><input type={apiKeyVisible ? "text" : "password"} value={form.modelKeys.apiKey} onChange={(event) => updateModelKey("apiKey", event.target.value)} autoComplete="off" /><button type="button" onClick={() => setApiKeyVisible((value) => !value)} aria-label={apiKeyVisible ? "Hide API key" : "Show API key"}>{apiKeyVisible ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label><label className="setup-field"><span>LLM endpoint</span><input value={form.modelKeys.localLlmEndpoint} onChange={(event) => updateModelKey("localLlmEndpoint", event.target.value)} placeholder="http://localhost:11434" autoComplete="off" /></label><p className="setup-security-note"><LockKeyhole size={14} /><span><strong>Security note</strong> The API key remains in this tab's memory only and is excluded from local storage and telemetry.</span></p></div>}</section>
+            {modelsExpanded && <div className="setup-test-row"><button type="button" className="setup-test-button" onClick={() => void saveModel()} disabled={modelCheck.state === "testing"}>{modelCheck.state === "testing" ? "Configuring…" : "Save model key"}</button>{modelCheck.state !== "idle" && <span className={`setup-test-result is-${modelCheck.state}`} aria-live="polite">{modelCheck.message}</span>}</div>}
 
               <section className="setup-model-keys" aria-label="Sandbox provider"><button type="button" className="setup-model-keys-trigger" onClick={() => setSandboxExpanded((value) => !value)} aria-expanded={sandboxExpanded}><span><Box size={15} /><strong>Sandbox provider</strong><small>Optional Daytona sandbox for protected execution</small></span><ChevronDown size={15} /></button>{sandboxExpanded && <div className="setup-model-keys-body"><label className="setup-field"><span>Daytona API key</span><span className="setup-secret-field"><input type={sandboxVisible ? "text" : "password"} value={sandboxKey} onChange={(event) => setSandboxKey(event.target.value)} autoComplete="off" placeholder="daytona_…" /><button type="button" onClick={() => setSandboxVisible((value) => !value)} aria-label={sandboxVisible ? "Hide Daytona API key" : "Show Daytona API key"}>{sandboxVisible ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label><div className="setup-test-row"><button type="button" className="setup-test-button" onClick={() => void saveSandbox()} disabled={sandboxCheck.state === "testing"}>{sandboxCheck.state === "testing" ? "Configuring…" : "Save sandbox key"}</button>{sandboxCheck.state !== "idle" && <span className={`setup-test-result is-${sandboxCheck.state}`} aria-live="polite">{sandboxCheck.message}</span>}</div><p className="setup-security-note"><LockKeyhole size={14} /><span><strong>Security note</strong> The key is sent only to your local control plane and stored there for the operator session.</span></p></div>}</section>
             </section>}

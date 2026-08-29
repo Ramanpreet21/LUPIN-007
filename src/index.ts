@@ -6,6 +6,10 @@ import { startServer } from "./server";
 import { createIncidentRouter } from "./incident-plane";
 import { createSandboxRouter } from "./routes/sandbox";
 
+import { createModelRouter } from "./routes/model";
+import { runTrueForgeSetup } from "./trueforge-setup";
+import { buildLocalMcpUrl } from "./mcp-provider";
+
 const USAGE = `incident-agent - Incident Command Deck local control plane
 
 Usage:
@@ -86,12 +90,24 @@ async function main(): Promise<void> {
       registerRoutes: (app, { broadcast }) => {
         app.use(createIncidentRouter({ getTf: () => tf, logger, broadcast, model: config.trueforgeModel }));
         app.use(createSandboxRouter({ getTf: () => tf, logger }));
+
+        app.use(createModelRouter({ logger }));
       },
     });
   } catch (err) {
     logger.error({ event: "start_failed", err }, "failed to start server");
     process.exit(1);
   }
+
+  // 5a: auto-configure TrueForge once the server listens — create the model
+  // provider from the stored key (if any) and register the local read-only MCP
+  // connector. Fire-and-forget and best-effort; never blocks shutdown/boot.
+  void runTrueForgeSetup({
+    getTf: () => tf,
+    logger,
+    model: config.trueforgeModel,
+    mcpUrl: buildLocalMcpUrl(config.host, config.port),
+  });
 
   let closing = false;
   for (const signal of ["SIGINT", "SIGTERM"] as const) {

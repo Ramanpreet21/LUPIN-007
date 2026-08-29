@@ -296,6 +296,22 @@ export default function Home() {
       return { ok: false, message: err instanceof Error ? err.message : String(err) };
     }
   };
+  const configureModel = async (apiKey: string) => {
+    try {
+      const response = await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings/model`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ apiKey }),
+      });
+      const body = (await response.json().catch(() => ({}))) as { status?: string; error?: string; details?: string[] };
+      if (!response.ok) {
+        return { ok: false, status: body.error, message: body.details?.[0] ?? body.error ?? `HTTP ${response.status}` };
+      }
+      return { ok: true, status: body.status, message: "Model provider configured for TrueForge sessions." };
+    } catch (err) {
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    }
+  };
 
   const handleWorkspaceAction = (actionType: string, payload?: Record<string, unknown>) => {
     const detail = Object.entries(payload ?? {}).map(([key, value]) => `${key}: ${String(value)}`).join(" · ");
@@ -326,7 +342,7 @@ export default function Home() {
 
   const availableWorkspaceCards = workspaceCardDefinitions.filter((card) => card.id !== activeWorkspaceCardId);
 
-  if (!setupComplete && activeViewId === "COMMAND_DECK") return <FirstRunSetup onComplete={completeFirstRunSetup} onConfigureSandbox={configureSandbox} />;
+  if (!setupComplete && activeViewId === "COMMAND_DECK") return <FirstRunSetup onComplete={completeFirstRunSetup} onConfigureSandbox={configureSandbox} onConfigureModel={configureModel} />;
 
   return (
     <main className="luma-canvas fullscreen-canvas">

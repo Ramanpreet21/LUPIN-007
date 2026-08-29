@@ -12,7 +12,7 @@
     "serve": "node dist/index.js serve",
     "start": "node dist/index.js serve",
     "dev": "tsx src/index.ts serve",
-    "test": "npm run build && node --test dist/config.test.js dist/server.test.js dist/trueforge.test.js dist/incidents.test.js dist/incident-plane.test.js dist/sandbox-settings.test.js",
+    "test": "npm run build && node --test dist/config.test.js dist/server.test.js dist/trueforge.test.js dist/incidents.test.js dist/incident-plane.test.js dist/sandbox-settings.test.js dist/command-scope.test.js dist/policy.test.js dist/model-settings.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke": "demo/smoke.sh"
   },
