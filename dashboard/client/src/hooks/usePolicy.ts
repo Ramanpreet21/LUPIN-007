@@ -29,6 +29,8 @@ export function usePolicy(): {
 } {
   const [rules, setRules] = useState<PolicyRule[]>(mockGovernanceData);
   const [loadedFromPlane, setLoadedFromPlane] = useState(false);
+  /** Prevents a slow earlier response from overwriting a faster later one. */
+  const [seq, setSeq] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,16 +55,21 @@ export function usePolicy(): {
   }, []);
 
   const simulate = async (command: string): Promise<AstSimulation> => {
+    const mySeq = seq + 1;
+    setSeq(mySeq);
     try {
       const response = await fetch(`${CONTROL_PLANE_ORIGIN}/api/policy/simulate`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ command }),
       });
+      // Drop out-of-order responses so a slow earlier request can't overwrite a newer result.
+      if (mySeq !== seq) return fallbackSimulation(command);
       return response.ok
         ? ((await response.json()) as AstSimulation)
         : fallbackSimulation(command);
     } catch {
+      if (mySeq !== seq) return fallbackSimulation(command);
       return fallbackSimulation(command);
     }
   };

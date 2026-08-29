@@ -91,7 +91,7 @@ async function main(): Promise<void> {
         app.use(createIncidentRouter({ getTf: () => tf, logger, broadcast, model: config.trueforgeModel }));
         app.use(createSandboxRouter({ getTf: () => tf, logger }));
 
-        app.use(createModelRouter({ logger }));
+        app.use(createModelRouter({ logger, getTf: () => tf, model: config.trueforgeModel }));
       },
     });
   } catch (err) {
@@ -106,7 +106,7 @@ async function main(): Promise<void> {
     getTf: () => tf,
     logger,
     model: config.trueforgeModel,
-    mcpUrl: buildLocalMcpUrl(config.host, config.port),
+    mcpUrl: buildLocalMcpUrl(config.host, server.port, config.trueforgeBaseUrl),
   });
 
   let closing = false;

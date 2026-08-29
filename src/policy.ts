@@ -1,4 +1,4 @@
-import { effectiveCommand, shellWords } from "./shell-parse";
+import { effectiveCommand, shellWords, splitShellStatements } from "./shell-parse";
 
 /**
  * Read-only policy backend (5e). The rule list is seeded to mirror the
@@ -134,10 +134,23 @@ const SCORE = { BASE: 10, CRITICAL_BLOCK: 35, REQUIRE_APPROVAL: 15, MAX: 100 } a
  * `forbiddenFlags` means "any argument on this binary"; an empty list means the
  * binary name alone trips (the eval rule).
  */
-export function simulatePolicyRule(command: string): AstSimulation {
-  const statement = effectiveCommand(command);
+/** Normalize an executable token to its basename so /bin/rm and rm are equivalent. */
+function exeBase(token: string): string {
+  return token.slice(token.lastIndexOf("/") + 1);
+}
+
+/**
+ * Simulate a single statement through the active rules. Returns a partial result
+ * (command, highest node, score delta) that `simulatePolicyRule` merges across statements.
+ */
+function scoreStatement(statement: string): {
+  nodes: AstNode[];
+  high: number;
+  medium: number;
+} {
   const tokens = shellWords(statement);
-  const executable = tokens[0]?.word ?? "";
+  const raw = tokens[0]?.word ?? "";
+  const executable = exeBase(raw);
   const args = tokens.slice(1).map((t) => t.word).filter(Boolean);
 
   const nodes: AstNode[] = [
@@ -157,7 +170,7 @@ export function simulatePolicyRule(command: string): AstSimulation {
   let high = 0;
   let medium = 0;
   for (const rule of POLICY_RULES) {
-    if (!rule.enabled || rule.binaryName !== executable) continue;
+    if (!rule.enabled || exeBase(rule.binaryName) !== executable) continue;
     let trippedIndex: number | null = null;
     if (rule.forbiddenFlags.includes("*") || rule.forbiddenFlags.length === 0) {
       trippedIndex = args.length > 0 ? 0 : null;
@@ -177,17 +190,50 @@ export function simulatePolicyRule(command: string): AstSimulation {
     else medium += 1;
   }
 
-  const riskScore = Math.min(
-    SCORE.MAX,
-    SCORE.BASE + high * SCORE.CRITICAL_BLOCK + medium * SCORE.REQUIRE_APPROVAL,
-  );
+  return { nodes, high, medium };
+}
+
+/**
+ * Run a command through the active rules and produce the dashboard's AST shape.
+ * Each semicolon-separated statement is scored independently; the worst result
+ * across all statements becomes the final risk score and tripped node.
+ * Findings #7, #8, #16, #17.
+ */
+export function simulatePolicyRule(command: string): AstSimulation {
+  const statements = splitShellStatements(command);
+  const allNodes: AstNode[] = [];
+  let totalHigh = 0;
+  let totalMedium = 0;
+  let worstNodes: AstNode[] = [];
+  let worstHigh = 0;
+  let worstMedium = 0;
+
+  for (const stmt of statements) {
+    const effective = effectiveCommand(stmt);
+    const { nodes, high, medium } = scoreStatement(effective);
+    allNodes.push(...nodes);
+    totalHigh += high;
+    totalMedium += medium;
+    // Update worst on every iteration so the baseline (no-violations) statement
+    // becomes the fallback when nothing higher is found.
+    if (high > worstHigh || (high === worstHigh && medium > worstMedium) || worstNodes.length === 0) {
+      worstHigh = high;
+      worstMedium = medium;
+      worstNodes = nodes;
+    }
+  }
+
+  const riskScore = Math.min(SCORE.MAX, SCORE.BASE + totalHigh * SCORE.CRITICAL_BLOCK + totalMedium * SCORE.REQUIRE_APPROVAL);
   const highest =
-    nodes.find((n) => n.risk === "high") ?? nodes.find((n) => n.risk === "medium") ?? nodes[0];
+    worstNodes.find((n) => n.risk === "high")
+    ?? worstNodes.find((n) => n.risk === "medium")
+    ?? worstNodes[0]
+    ?? { id: "root", label: "Command", kind: "(none)", risk: "low" as const };
 
   return {
     command: command.trim(),
     riskScore,
     trippedNode: `${highest.label}: ${highest.kind}`,
-    nodes,
+    nodes: allNodes,
   };
 }

@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from "express";
+import { realpathSync } from "node:fs";
 import { execReadOnly, type ExecError, type ReadOnlyExecutor } from "./exec-readonly";
 
 export const LOCAL_MCP_NAME = "incident-deck-mcp";
@@ -14,10 +15,47 @@ export const TOOL_NAMES = [
   "dns_lookup",
 ] as const;
 
-/** The URL TrueForge should dial. Loopback bindings flatten to 127.0.0.1. */
-export function buildLocalMcpUrl(host: string, port: number): string {
-  const bind = host === "" || host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
-  return `http://${bind}:${port}/mcp`;
+/**
+ * Build the URL TrueForge should use to reach the local MCP provider.
+ *
+ * Topology logic (finding #18):
+ *   - TrueForge is "local" when its base URL names localhost/127.0.0.1 —
+ *     in that case we advertise 127.0.0.1 so it can reach us directly.
+ *   - TrueForge is "remote" when its base URL names a real hostname/IP
+ *     (separate host or container). TrueForge must advertise a URL it can
+ *     actually dial, so we use the hostname from TRUEFORGE_BASE_URL as
+ *     the MCP URL host. The control plane must be reachable at that
+ *     hostname from TrueForge's network location.
+ *
+ * Ephemeral-port note: callers MUST pass the actual bound port (from
+ * server.address().port after listen()), not the configured port, so
+ * PORT=0 works correctly (finding #3).
+ */
+export function buildLocalMcpUrl(
+  host: string,
+  port: number,
+  trueforgeBaseUrl?: string,
+): string {
+  const loopback =
+    host === "" || host === "0.0.0.0" || host === "::" || host === "127.0.0.1";
+
+  let mcpHost: string;
+  if (loopback && trueforgeBaseUrl) {
+    // TrueForge is on a separate host — use TrueForge's own hostname so it
+    // can route back to us. If the URL is http://tf.internal:8790 we want
+    // the MCP at http://tf.internal:<port>/mcp.
+    try {
+      const tfUrl = new URL(trueforgeBaseUrl);
+      mcpHost = tfUrl.hostname;
+    } catch {
+      mcpHost = "127.0.0.1";
+    }
+  } else {
+    // TrueForge is local (or no URL): advertise loopback.
+    mcpHost = "127.0.0.1";
+  }
+
+  return `http://${mcpHost}:${port}/mcp`;
 }
 
 const PROTOCOL_VERSION = "2025-03-26";
@@ -180,11 +218,18 @@ async function callTool(
       }
       case "file_read": {
         const path = str(params.path);
-        const allowed = Boolean(path && ALLOWED_READ_PREFIXES.some((p) => path.startsWith(p)));
-        if (!path || !allowed)
-          return { error: error(-32602, `file_read path must start with: ${ALLOWED_READ_PREFIXES.join(", ")}`) };
-        if (path.includes(".."))
+        if (!path || path.includes(".."))
           return { error: error(-32602, "file_read path must not contain '..'") };
+        // Resolve symlinks before the prefix check so symlink traversal is blocked.
+        let resolved: string;
+        try {
+          resolved = realpathSync(path);
+        } catch {
+          return { error: error(-32602, "file_read: path does not exist or is inaccessible") };
+        }
+        const allowed = ALLOWED_READ_PREFIXES.some((p) => resolved.startsWith(p));
+        if (!allowed)
+          return { error: error(-32602, `file_read path must be under: ${ALLOWED_READ_PREFIXES.join(", ")}`) };
         return { result: text(await executor("cat", [path])) };
       }
       case "dns_lookup": {

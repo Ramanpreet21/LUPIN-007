@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { commandScope } from "./command-scope";
 
 test("systemctl restart nginx annotates the unit and its resources", () => {
-  const scope = commandScope("sudo systemctl restart nginx");
+  const scope = commandScope("sudo systemctl restart nginx")[0];
   assert.equal(scope.executable, "systemctl");
   assert.ok(scope.services.includes("nginx"));
   assert.ok(scope.files.includes("/etc/nginx/"));
@@ -14,7 +14,7 @@ test("systemctl restart nginx annotates the unit and its resources", () => {
 });
 
 test("an unmapped executable is flagged unknown for operator review", () => {
-  const scope = commandScope("python3 deploy.py --prod");
+  const scope = commandScope("python3 deploy.py --prod")[0];
   assert.equal(scope.executable, "python3");
   assert.equal(scope.unknown, true);
   assert.deepEqual(scope.files, []);
@@ -22,15 +22,31 @@ test("an unmapped executable is flagged unknown for operator review", () => {
 });
 
 test("high-risk markers raise risk for the whole gate", () => {
-  assert.equal(commandScope("rm -rf /var/log/foo").risk, "high");
-  assert.equal(commandScope("chmod 777 /etc/nginx/site.conf").risk, "high");
-  assert.equal(commandScope("ssh root@10.0.0.1 -p 22").risk, "high");
-  assert.equal(commandScope("systemctl stop nginx").risk, "high");
-  assert.equal(commandScope("echo /etc/shadow").risk, "high", "path mention is still high-risk");
+  assert.equal(commandScope("rm -rf /var/log/foo")[0].risk, "high");
+  assert.equal(commandScope("chmod 777 /etc/nginx/site.conf")[0].risk, "high");
+  assert.equal(commandScope("ssh root@10.0.0.1 -p 22")[0].risk, "high");
+  assert.equal(commandScope("systemctl stop nginx")[0].risk, "high");
+  assert.equal(commandScope("echo /etc/shadow")[0].risk, "high", "path mention is still high-risk");
 });
 
 test("env-assignment and wrapper prefixes resolve to the real executable", () => {
-  const scope = commandScope("FOO=bar sudo env sh -c 'systemctl restart nginx'");
+  const scope = commandScope("FOO=bar sudo env sh -c 'systemctl restart nginx'")[0];
   assert.equal(scope.executable, "systemctl");
   assert.ok(scope.services.includes("nginx"));
+});
+
+test("semicolon-chained commands produce one scope per statement", () => {
+  const scopes = commandScope("systemctl restart nginx; rm -rf /tmp/x");
+  assert.equal(scopes.length, 2);
+  assert.equal(scopes[0].executable, "systemctl");
+  assert.equal(scopes[0].services.includes("nginx"), true);
+  assert.equal(scopes[1].executable, "rm");
+  assert.equal(scopes[1].risk, "high");
+});
+
+test("systemctl --host flag-value parsing", () => {
+  // --host node-a consumes node-a as a value; nginx is the unit
+  const scope = commandScope("systemctl --host node-a stop nginx")[0];
+  assert.equal(scope.executable, "systemctl");
+  assert.ok(scope.services.includes("nginx"), "nginx should be recognized as the unit");
 });

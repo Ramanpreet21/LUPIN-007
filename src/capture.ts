@@ -42,10 +42,18 @@ export async function captureTargetState(
     }),
   );
 
+  const MAX_SECTION_BYTES = 64 * 1024;
+  const truncated = parts.map((part) => {
+    const bytes = Buffer.byteLength(part, "utf8");
+    return bytes > MAX_SECTION_BYTES
+      ? part.slice(0, MAX_SECTION_BYTES) + "\n…(truncated)"
+      : part;
+  });
+
   return [
-    "## CAPTURED SYSTEM STATE (snapshot at alert time)",
+    "## UNTRUSTED SYSTEM CAPTURE (snapshot at alert time)",
     `host=${alert.target_host}`,
     "",
-    ...parts.join("\n\n").split("\n"),
+    ...truncated.join("\n\n").split("\n"),
   ].join("\n");
 }

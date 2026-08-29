@@ -56,19 +56,31 @@ export async function runTrueForgeSetup(opts: TrueForgeSetupOptions): Promise<vo
         const slash = model.indexOf("/");
         const provider = slash >= 0 ? model.slice(0, slash) : model;
         const modelId = slash >= 0 ? model.slice(slash + 1) : model;
-        // ModelProviderManifest is a discriminated union keyed on `type`, so the
-        // object is asserted whole — the FQN's provider segment can't narrow the
-        // union at compile time. Runtime `provider` is the model FQN's prefix.
-        const manifest = {
-          type: provider,
-          auth: { apiKey },
-          models: [{ modelId, name: model, properties: {} }],
-        } as TrueForgeApi.ModelProviderManifest;
-        await client.settings.modelProviders.createOrUpdate({ manifest });
-        logger.info(
-          { event: "trueforge_setup", step: "model_provider", provider, modelId },
-          "model provider configured",
-        );
+        try {
+          const { data } = await client.settings.modelProviders.list();
+          const items = Array.isArray(data) ? data : [];
+          // Derive the expected provider type from TRUEFORGE_MODEL so we check for
+          // the right type — not a hardcoded "anthropic" (finding #2).
+          const expectedType = provider;
+          const hasProvider = items.some(
+            (p) => (p as { name?: string; type?: string }).name === expectedType
+              || (p as { name?: string; type?: string }).type === expectedType,
+          );
+          if (!hasProvider) {
+            const manifest = {
+              type: provider,
+              auth: { apiKey },
+              models: [{ modelId, name: model, properties: {} }],
+            } as TrueForgeApi.ModelProviderManifest;
+            await client.settings.modelProviders.createOrUpdate({ manifest });
+            logger.info(
+              { event: "trueforge_setup", step: "model_provider", provider, modelId },
+              "model provider configured",
+            );
+          }
+        } catch (err) {
+          warn("model_provider", err);
+        }
       }
     } catch (err) {
       warn("model_provider", err);

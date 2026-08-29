@@ -25,7 +25,7 @@ async function withRouters(getTf: () => TrueForgeHandle, getStatus: () => TrueFo
     logger,
     getStatus,
     registerRoutes: (app) => {
-      app.use(createModelRouter({ logger }));
+      app.use(createModelRouter({ logger, getTf, model: "anthropic/claude-sonnet-5" }));
       app.use(createSandboxRouter({ getTf, logger }));
     },
   });

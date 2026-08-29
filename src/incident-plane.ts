@@ -271,7 +271,7 @@ export function createIncidentRouter({
             const commands = gated.map((t) => toolCommandString(t) || t.id || "unknown");
             const badges = computeGateBadges(commands);
 
-            const scope = commands.map(commandScope);
+            const scope = commands.flatMap(commandScope);
             patchIncident(incidentId, {
               turnId,
               threadId: gate.threadId,
@@ -436,7 +436,7 @@ export function createIncidentRouter({
             const commands = gated.map((t) => toolCommandString(t) || t.id || "unknown");
             const badges = computeGateBadges(commands);
 
-            const scope = commands.map(commandScope);
+            const scope = commands.flatMap(commandScope);
             patchIncident(incidentId, {
               sessionId: incident.sessionId,
               turnId,
