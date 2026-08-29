@@ -4,6 +4,7 @@ import { createLogger, type Logger } from "./logger";
 import { initTrueForge } from "./trueforge";
 import { startServer } from "./server";
 import { createIncidentRouter } from "./incident-plane";
+import { createSandboxRouter } from "./routes/sandbox";
 
 const USAGE = `incident-agent - Incident Command Deck local control plane
 
@@ -83,7 +84,8 @@ async function main(): Promise<void> {
       logger,
       getStatus: () => tf.status,
       registerRoutes: (app, { broadcast }) => {
-        app.use(createIncidentRouter({ getTf: () => tf, logger, broadcast }));
+        app.use(createIncidentRouter({ getTf: () => tf, logger, broadcast, model: config.trueforgeModel }));
+        app.use(createSandboxRouter({ getTf: () => tf, logger }));
       },
     });
   } catch (err) {

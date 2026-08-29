@@ -5,6 +5,8 @@ import { createLogger } from "./logger";
 import { startServer } from "./server";
 import type { TrueForgeStatus } from "./trueforge";
 
+import { createIncident, setIncidentStatus } from "./incidents";
+
 const logger = createLogger("silent");
 const readyStatus: TrueForgeStatus = { state: "ready", baseUrlConfigured: true, authConfigured: false };
 const unconfiguredStatus: TrueForgeStatus = { state: "unconfigured", missing: ["TRUEFORGE_BASE_URL"] };
@@ -79,6 +81,24 @@ test("upgrade at a non-ws path is rejected", async () => {
     });
   } finally {
     ws.close();
+    await server.close();
+  }
+});
+
+
+test("GET /health reports live incident counts from the store", async () => {
+  const incident = createIncident({ service_name: "svc", target_host: "h", severity: "warning" });
+  assert.ok(incident);
+  setIncidentStatus(incident!.id, "completed");
+  const server = await withServer(() => readyStatus);
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.port}/health`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { incidents_active: number; incidents_total: number };
+    // The seeded incident is terminal (completed) → nothing active; total is exactly 1.
+    assert.equal(body.incidents_active, 0);
+    assert.equal(body.incidents_total, 1);
+  } finally {
     await server.close();
   }
 });

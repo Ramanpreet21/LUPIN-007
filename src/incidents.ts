@@ -361,3 +361,36 @@ export function patchIncident(
   Object.assign(incident, patch);
   return incident;
 }
+
+export function getIncidentStats(): { active: number; total: number } {
+  let active = 0;
+  for (const incident of incidents.values()) {
+    if (!TERMINAL_STATUSES.has(incident.status)) active += 1;
+  }
+  return { active, total: incidents.size };
+}
+
+/**
+ * Read-only view of the incident store, newest first. The archive's `resolved`
+ * filter is the set of terminal statuses: the store has no literal `resolved`
+ * state, so listIncidents maps `status: "resolved"` to the terminal set
+ * (completed | failed | rejected) instead of a dead-exact match.
+ */
+export function listIncidents(options?: {
+  status?: IncidentStatus | "resolved";
+  limit?: number;
+}): Incident[] {
+  const { status, limit } = options ?? {};
+  const all = [...incidents.values()].sort(
+    (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
+  );
+  const rows =
+    status === "resolved"
+      ? all.filter((incident) => TERMINAL_STATUSES.has(incident.status))
+      : status
+        ? all.filter((incident) => incident.status === status)
+        : all;
+  return limit !== undefined && Number.isInteger(limit) && limit >= 0
+    ? rows.slice(0, limit)
+    : rows;
+}

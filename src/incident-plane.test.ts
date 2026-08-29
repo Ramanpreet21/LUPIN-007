@@ -5,6 +5,7 @@ import { createLogger } from "./logger";
 import { startServer } from "./server";
 import type { TrueForgeHandle } from "./trueforge";
 import { computeSafetyBadges, createIncidentRouter } from "./incident-plane";
+import { createIncident, setIncidentStatus } from "./incidents";
 import type { TrueForgeApi } from "@truefoundry/trueforge-sdk";
 
 type TurnStreamingEvent = TrueForgeApi.TurnStreamingEvent;
@@ -28,9 +29,13 @@ function makeFakeHandle(initial: TurnStreamingEvent[], resume: TurnStreamingEven
   const cancelled: string[] = [];
   const resumed: { sessionId: string; request: { previousTurnId?: string; input?: unknown } }[] = [];
   const createCalls: { sessionId: string; request: unknown }[] = [];
+  const createRequests: unknown[] = [];
   const client = {
     sessions: {
-      create: async (): Promise<{ data: { id: string } }> => ({ data: { id: "sess-1" } }),
+      create: async (request: unknown): Promise<{ data: { id: string } }> => {
+        createRequests.push(request);
+        return { data: { id: "sess-1" } };
+      },
       createTurnStream: async (
         sessionId: string,
         request: { previousTurnId?: string; input?: unknown },
@@ -54,7 +59,7 @@ function makeFakeHandle(initial: TurnStreamingEvent[], resume: TurnStreamingEven
     status: { state: "ready", baseUrlConfigured: true, authConfigured: false },
     client,
   } as unknown as TrueForgeHandle;
-  return { handle, cancelled, resumed, createCalls };
+  return { handle, cancelled, resumed, createCalls, createRequests };
 }
 
 function diagnosisGateStream(): TurnStreamingEvent[] {
@@ -160,6 +165,19 @@ function postJson(url: string, body: string) {
     body,
   });
 }
+
+test("GET /incidents returns an empty list on an empty store", async () => {
+  const fake = makeFakeHandle([], []);
+  const server = await withServer(fake.handle);
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.port}/incidents`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { data: unknown };
+    assert.deepEqual(body, { data: [] });
+  } finally {
+    await server.close();
+  }
+});
 
 test("POST /alerts returns 503 trueforge_unconfigured when TrueForge is not ready", async () => {
   const handle: TrueForgeHandle = {
@@ -657,6 +675,132 @@ test("multi-call approval gate resumes every gated tool call", async () => {
     assert.equal(resumeInput[1].approval?.status, "allow");
   } finally {
     ws.close();
+    await server.close();
+  }
+});
+
+function sandboxStream(): TurnStreamingEvent[] {
+  const t0 = new Date().toISOString();
+  return [
+    ev({ type: "turn.created", id: "s0", createdAt: t0, turnId: "turn-1", threadId: "thread-1", previousTurnId: null, state: "running" }),
+    ev({ type: "sandbox.created", id: "s1", createdAt: t0, threadId: "thread-1", sandboxId: "sbx-123" }),
+    ev({ type: "turn.done", id: "s2", createdAt: t0, threadId: "thread-1", state: { status: "done" } }),
+  ];
+}
+
+test("sandbox.created in the diagnosis stream broadcasts sandbox_started", async () => {
+  const fake = makeFakeHandle(sandboxStream(), []);
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    const res = await postJson(`http://127.0.0.1:${server.port}/alerts`, alertBody);
+    assert.equal(res.status, 202);
+    const { incident_id } = (await res.json()) as { incident_id: string };
+    const started = await ws.waitFor("sandbox_started");
+    assert.equal(started.incident_id, incident_id);
+    assert.equal(started.payload.sandbox_id, "sbx-123");
+    assert.equal(started.payload.thread_id, "thread-1");
+    assert.equal(typeof started.payload.created_at, "string");
+  } finally {
+    ws.close();
+    await server.close();
+  }
+});
+
+test("session creation enables the sandbox with the configured model FQN", async () => {
+  const fake = makeFakeHandle(completedStream(), []);
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    const res = await postJson(`http://127.0.0.1:${server.port}/alerts`, alertBody);
+    assert.equal(res.status, 202);
+    await ws.waitFor("execution_complete");
+    assert.equal(fake.createRequests.length, 1);
+    const request = fake.createRequests[0] as {
+      agent: {
+        spec: {
+          model: { name: string };
+          instructions: string;
+          config: { sandbox: { enabled: boolean } };
+        };
+      };
+    };
+    // No name-ref shortcut: sandbox mode + the responder prompt live on the spec body.
+    assert.equal(request.agent.spec.config.sandbox.enabled, true);
+    // Router-constructed default here; index.ts injects the TRUEFORGE_MODEL value.
+    assert.equal(request.agent.spec.model.name, "anthropic/claude-sonnet-5");
+    // The responder prompt rides as system instructions, not a user message (qodo #6).
+    assert.ok(request.agent.spec.instructions.includes("expert Site Reliability Engineer"));
+  } finally {
+    ws.close();
+    await server.close();
+  }
+});
+
+test("GET /incidents lists the store newest-first with status/limit filtering", async () => {
+  const a = createIncident({ service_name: "svc-a", target_host: "h1", severity: "warning" });
+  const b = createIncident({ service_name: "svc-b", target_host: "h2", severity: "critical" });
+  const c = createIncident({ service_name: "svc-c", target_host: "h3", severity: "warning" });
+  assert.ok(a && b && c);
+  setIncidentStatus(a!.id, "completed");
+  setIncidentStatus(b!.id, "awaiting_approval");
+  setIncidentStatus(c!.id, "failed");
+  const fake = makeFakeHandle([], []);
+  const server = await withServer(fake.handle);
+  try {
+    // `resolved` maps to the terminal set (completed | failed | rejected).
+    const resolved = await fetch(
+      `http://127.0.0.1:${server.port}/incidents?status=resolved&limit=50`,
+    );
+    assert.equal(resolved.status, 200);
+    const resolvedBody = (await resolved.json()) as {
+      data: Array<{ id: string; status: string; createdAt: string }>;
+    };
+    const resolvedIds = resolvedBody.data.map((i) => i.id);
+    assert.ok(resolvedIds.includes(a!.id));
+    assert.ok(resolvedIds.includes(c!.id));
+    assert.ok(!resolvedIds.includes(b!.id), "awaiting_approval is not terminal");
+    for (const incident of resolvedBody.data) {
+      assert.ok(["completed", "failed", "rejected"].includes(incident.status));
+    }
+    // Newest first by createdAt; same-millisecond rows keep insertion order.
+    for (let i = 1; i < resolvedBody.data.length; i++) {
+      assert.ok(
+        Date.parse(resolvedBody.data[i - 1].createdAt) >= Date.parse(resolvedBody.data[i].createdAt),
+        "resolved rows are ordered newest first",
+      );
+    }
+
+    const awaiting = await fetch(
+      `http://127.0.0.1:${server.port}/incidents?status=awaiting_approval`,
+    );
+    assert.equal(awaiting.status, 200);
+    const awaitingBody = (await awaiting.json()) as {
+      data: Array<{ id: string; status: string }>;
+    };
+    // Shared store: earlier tests may have left other awaiting_approval incidents,
+    // so assert membership + purity rather than an exact row list.
+    const awaitingIds = awaitingBody.data.map((i) => i.id);
+    assert.ok(awaitingIds.includes(b!.id), "awaiting filter includes b");
+    for (const incident of awaitingBody.data) {
+      assert.ok(incident.status === "awaiting_approval");
+    }
+
+    const limited = await fetch(
+      `http://127.0.0.1:${server.port}/incidents?status=resolved&limit=1`,
+    );
+    assert.equal(limited.status, 200);
+    const limitedBody = (await limited.json()) as { data: unknown[] };
+    assert.equal(limitedBody.data.length, 1);
+
+    // A malformed limit falls back to the default 50-row cap (qodo #3).
+    const malformed = await fetch(
+      `http://127.0.0.1:${server.port}/incidents?status=resolved&limit=abc`,
+    );
+    assert.equal(malformed.status, 200);
+    const malformedBody = (await malformed.json()) as { data: unknown[] };
+    assert.ok(malformedBody.data.length <= 50, "malformed limit stays capped at 50");
+  } finally {
     await server.close();
   }
 });
