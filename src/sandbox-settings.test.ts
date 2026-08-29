@@ -15,6 +15,8 @@ interface ProviderState {
   data: { status: string; statusReason: string | null };
   error?: unknown;
   createError?: unknown;
+  /** Flipped true by a successful PUT; before that the provider has no config. */
+  configured?: boolean;
   createCalls: unknown[];
 }
 
@@ -22,11 +24,20 @@ function makeSandboxHandle(state: ProviderState) {
   const provider = {
     get: async () => {
       if (state.error) throw state.error;
+      // The provider is the source of truth: before a successful PUT it has no
+      // configuration, which the SDK's get() surfaces as a NotFoundError (404).
+      if (!state.configured) {
+        throw Object.assign(new Error("sandbox provider not configured"), {
+          statusCode: 404,
+          name: "NotFoundError",
+        });
+      }
       return { data: state.data };
     },
     createOrUpdate: async (request: unknown) => {
       state.createCalls.push(request);
       if (state.createError) throw state.createError;
+      state.configured = true;
       return { data: state.data };
     },
   };
@@ -53,9 +64,8 @@ async function withSandboxServer(state: ProviderState) {
 
 const baseUrl = (port: number): string => `http://127.0.0.1:${port}`;
 
-// NOTE: the sandbox key lives in a module-global in-memory store. These tests
-// are ordered: the two "unconfigured" GET tests must run before any PUT stores
-// a key (node --test runs tests in declaration order within a file).
+// Each test owns its provider stub; `configured` flips on a successful PUT, so
+// tests are independent of each other and of any module-global state.
 
 test("GET /api/settings/sandbox is unconfigured before any key is supplied", async () => {
   const state: ProviderState = { data: { status: "ready", statusReason: null }, createCalls: [] };

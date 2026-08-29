@@ -717,12 +717,20 @@ test("session creation enables the sandbox with the configured model FQN", async
     await ws.waitFor("execution_complete");
     assert.equal(fake.createRequests.length, 1);
     const request = fake.createRequests[0] as {
-      agent: { spec: { model: { name: string }; config: { sandbox: { enabled: boolean } } } };
+      agent: {
+        spec: {
+          model: { name: string };
+          instructions: string;
+          config: { sandbox: { enabled: boolean } };
+        };
+      };
     };
-    // No name-ref shortcut: sandbox mode lives on the spec body (SDK 0.1.3).
+    // No name-ref shortcut: sandbox mode + the responder prompt live on the spec body.
     assert.equal(request.agent.spec.config.sandbox.enabled, true);
     // Router-constructed default here; index.ts injects the TRUEFORGE_MODEL value.
     assert.equal(request.agent.spec.model.name, "anthropic/claude-sonnet-5");
+    // The responder prompt rides as system instructions, not a user message (qodo #6).
+    assert.ok(request.agent.spec.instructions.includes("expert Site Reliability Engineer"));
   } finally {
     ws.close();
     await server.close();
@@ -784,6 +792,14 @@ test("GET /incidents lists the store newest-first with status/limit filtering", 
     assert.equal(limited.status, 200);
     const limitedBody = (await limited.json()) as { data: unknown[] };
     assert.equal(limitedBody.data.length, 1);
+
+    // A malformed limit falls back to the default 50-row cap (qodo #3).
+    const malformed = await fetch(
+      `http://127.0.0.1:${server.port}/incidents?status=resolved&limit=abc`,
+    );
+    assert.equal(malformed.status, 200);
+    const malformedBody = (await malformed.json()) as { data: unknown[] };
+    assert.ok(malformedBody.data.length <= 50, "malformed limit stays capped at 50");
   } finally {
     await server.close();
   }

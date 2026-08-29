@@ -20,12 +20,33 @@ function formatUptime(seconds: number): string {
 }
 
 export function HealthSummaryCard({ data, isLoading = false, error = null }: HealthSummaryCardProps) {
-  if (isLoading || !data) {
+  if (isLoading && !data) {
     return (
       <article className="signal-module health-summary-card glass-surface health-summary-card--loading" aria-busy="true" aria-label="Loading system health">
         <div className="health-skeleton-line health-skeleton-title" />
         <div className="health-skeleton-line" />
         <div className="health-skeleton-line health-skeleton-short" />
+      </article>
+    );
+  }
+
+  if (!data) {
+    return (
+      <article className="signal-module health-summary-card glass-surface health-summary-card--degraded" aria-label="Control plane health: unavailable">
+        <div className="module-heading health-heading">
+          <p className="eyebrow">Control plane</p>
+          <div className="health-heading-actions">
+            <span className="health-status health-status--degraded"><i />Unavailable</span>
+          </div>
+        </div>
+        <div className="health-alert-state">
+          <AlertTriangle size={13} />
+          <div>
+            <span>Health check unavailable</span>
+            <strong>{error ?? "No health snapshot yet."}</strong>
+          </div>
+        </div>
+        <Activity className="health-watermark" size={70} strokeWidth={.7} aria-hidden="true" />
       </article>
     );
   }

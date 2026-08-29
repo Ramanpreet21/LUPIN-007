@@ -38,6 +38,19 @@ export function startServer(opts: ServerOptions): Promise<ServerHandle> {
   app.disable("x-powered-by");
   app.use(express.json());
 
+  // CORS: the dashboard (Vite dev on another port, or the Electron host) calls
+  // the control plane cross-origin; the API is intentionally bearer-free.
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    if (_req.method === "OPTIONS") {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
+
   const wss = new WebSocketServer({ noServer: true });
   const broadcast = (message: unknown): void => {
     const data = JSON.stringify(message);

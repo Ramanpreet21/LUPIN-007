@@ -69,7 +69,7 @@ function mapIncident(incident: BackendIncident): ArchivedIncident {
   };
 }
 
-export function useIncidentArchive() {
+export function useIncidentArchive(pollMs = 10_000) {
   const [query, setQuery] = useState("");
   const [severity, setSeverity] = useState<IncidentSeverity | "ALL">("ALL");
   const [dateRange, setDateRange] = useState("90_DAYS");
@@ -78,7 +78,9 @@ export function useIncidentArchive() {
   const [notice, setNotice] = useState("");
   const [incidents, setIncidents] = useState<BackendIncident[]>([]);
 
-  // Live archive (PR #4 4e): one fetch per mount; date-range filtering is client-side.
+  // Live archive (PR #4 4e): fetch on mount and poll every `pollMs` so the
+  // archive tracks the control plane while the dashboard is open. Date-range
+  // filtering is client-side.
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -92,10 +94,12 @@ export function useIncidentArchive() {
       }
     };
     void load();
+    const timer = window.setInterval(() => void load(), pollMs);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
-  }, []);
+  }, [pollMs]);
 
   const visibleIncidents = useMemo(() => {
     const needle = query.trim().toLowerCase();

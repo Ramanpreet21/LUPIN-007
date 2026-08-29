@@ -29,9 +29,6 @@ const DAYTONA_PRESETS = {
   execTimeoutMs: 300000, // 5 min
 } as const;
 
-// Single global API key for the operator's sandbox provider (not per-tenant).
-let currentApiKey: string | undefined;
-
 /** An unconfigured provider surfaces as a 404 from the SDK's `get()`. */
 function isUnconfiguredError(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
@@ -42,13 +39,13 @@ function isUnconfiguredError(err: unknown): boolean {
 }
 
 /**
- * Current sandbox setup. `unconfigured` until the operator supplies a key via
- * PUT; once configured, the live provider status drives pending/ready/error.
+ * Current sandbox setup. The provider is the source of truth: `unconfigured`
+ * until one is configured; otherwise its live status drives the result.
  */
 export async function getSandboxSettings(
   client: SandboxProviderClient | null,
 ): Promise<SandboxSettings> {
-  if (currentApiKey === undefined || client === null) {
+  if (client === null) {
     return { configured: false, status: "unconfigured" };
   }
   let provider: { data: { status: string; statusReason: string | null } };
@@ -72,8 +69,8 @@ export async function getSandboxSettings(
 
 /**
  * Configure the TrueForge sandbox provider with the operator's Daytona API key.
- * The key is stored locally only after the provider accepts it, so a rejected
- * key (400 at the provider) leaves the previous configuration intact.
+ * The provider is the source of truth for the settings; a bad key is rejected
+ * by the provider (400) before anything changes.
  */
 export async function updateSandboxSettings(
   client: SandboxProviderClient,
@@ -82,6 +79,5 @@ export async function updateSandboxSettings(
   await client.createOrUpdate({
     manifest: { ...DAYTONA_PRESETS, auth: { apiKey } },
   });
-  currentApiKey = apiKey;
   return getSandboxSettings(client);
 }
