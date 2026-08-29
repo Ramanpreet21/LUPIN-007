@@ -4,8 +4,6 @@ export interface AppConfig {
   logLevel: string;
   trueforgeBaseUrl?: string;
   trueforgeToken?: string;
-  /** Model FQN (provider/model) used for sandbox-enabled incident sessions. */
-  trueforgeModel: string;
 }
 
 export interface CliOptions {
@@ -16,7 +14,6 @@ export interface CliOptions {
 const DEFAULT_PORT = 3000;
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_LOG_LEVEL = "info";
-const DEFAULT_TRUEFORGE_MODEL = "anthropic/claude-sonnet-5";
 
 /** Parse a port string/number. Returns undefined for missing or invalid values. */
 export function parsePort(value: string | number | undefined): number | undefined {
@@ -40,6 +37,5 @@ export function loadConfig(env: NodeJS.ProcessEnv, cli: CliOptions = {}): AppCon
     logLevel,
     trueforgeBaseUrl: env.TRUEFORGE_BASE_URL || undefined,
     trueforgeToken: env.TRUEFORGE_TOKEN || undefined,
-    trueforgeModel: env.TRUEFORGE_MODEL || DEFAULT_TRUEFORGE_MODEL,
   };
 }

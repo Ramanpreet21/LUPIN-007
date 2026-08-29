@@ -33,17 +33,7 @@ export interface HealthSummary {
   };
 }
 
-/** Live control-plane health relayed by GET /health (PR #4 4d). */
-export interface ControlPlaneHealth {
-  status: string;
-  uptime: number;
-  trueforge_ready: boolean;
-  incidents_active: number;
-  incidents_total: number;
-}
-
 export interface HealthSummaryCardProps {
-  data: ControlPlaneHealth | null;
+  data: HealthSummary;
   isLoading?: boolean;
-  error?: string | null;
 }
