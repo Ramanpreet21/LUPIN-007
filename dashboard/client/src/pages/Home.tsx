@@ -18,10 +18,10 @@ import "./archive-fanout.css";
 import "@/components/workspace-cards/workspace-cards.css";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { mockAgentStatus } from "@/data/mockAgentStatus";
-import { mockHealthData } from "@/data/mockHealthData";
+import { useHealth } from "@/hooks/useHealth";
 import { mockBlastRadiusData, mockIncidentContext, mockSandboxTwinData, mockTopologyData, workspaceCardDefinitions } from "@/data/mockWorkspaceCards";
 import { IncidentDeck } from "@/components/IncidentDeck";
-import { useControlPlane } from "@/hooks/useControlPlane";
+import { CONTROL_PLANE_ORIGIN, useControlPlane } from "@/hooks/useControlPlane";
 import { useControlPlaneTerminalStream } from "@/hooks/useControlPlaneTerminalStream";
 import type { AgentStatusSummary, ApprovalMode, SSHStatus } from "@/types/agent-status";
 import type { ControlPlaneConnectionStatus } from "@/types/control-plane";
@@ -173,6 +173,7 @@ export default function Home() {
   const [activeAgentSkillId, setActiveAgentSkillId] = useState<string | null>(mockAgentStatus.activeSkillId ?? null);
   const controlPlane = useControlPlane();
   const terminalStream = useControlPlaneTerminalStream(controlPlane);
+  const health = useHealth();
   const workspaceRef = useRef<HTMLElement>(null);
   const conversationViewportRef = useRef<HTMLDivElement>(null);
   const [workspaceClip, setWorkspaceClip] = useState<WorkspaceClip | null>(null);
@@ -279,6 +280,23 @@ export default function Home() {
     setSetupComplete(false);
   };
 
+  const configureSandbox = async (apiKey: string) => {
+    try {
+      const response = await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings/sandbox`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ apiKey }),
+      });
+      const body = (await response.json().catch(() => ({}))) as { status?: string; error?: string; details?: string[] };
+      if (!response.ok) {
+        return { ok: false, status: body.error, message: body.details?.[0] ?? body.error ?? `HTTP ${response.status}` };
+      }
+      return { ok: true, status: body.status, message: "Sandbox provider configured." };
+    } catch (err) {
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    }
+  };
+
   const handleWorkspaceAction = (actionType: string, payload?: Record<string, unknown>) => {
     const detail = Object.entries(payload ?? {}).map(([key, value]) => `${key}: ${String(value)}`).join(" · ");
     setConversationMessages((current) => [...current, { id: `workspace-${Date.now()}`, role: "system", label: "WORKSPACE", time: "NOW", content: `${actionType.replaceAll("_", " ")} staged locally${detail ? ` · ${detail}` : ""}. No external execution has been requested.` }]);
@@ -300,7 +318,7 @@ export default function Home() {
     switch (cardId) {
       case "TOPOLOGY": return <TopologyMapCard {...common} className="workspace-card--compact" data={mockTopologyData} selectedNodeId={selectedTopologyNodeId} onSelectNode={setSelectedTopologyNodeId} />;
       case "BLAST_RADIUS": return <BlastRadiusCard {...common} className="workspace-card--compact" data={mockBlastRadiusData} />;
-      case "SANDBOX_TWIN": return <SandboxTwinCard {...common} className="workspace-card--compact" data={mockSandboxTwinData} />;
+      case "SANDBOX_TWIN": return <SandboxTwinCard {...common} className="workspace-card--compact" data={mockSandboxTwinData} sandboxId={controlPlane.sandbox?.sandbox_id ?? null} />;
       case "NOTES": return <NotesCard className="workspace-card--compact" notes={operatorNotes} draft={noteDraft} onDraftChange={setNoteDraft} onAddNote={addOperatorNote} onTogglePin={toggleOperatorNotePin} />;
       default: return null;
     }
@@ -308,7 +326,7 @@ export default function Home() {
 
   const availableWorkspaceCards = workspaceCardDefinitions.filter((card) => card.id !== activeWorkspaceCardId);
 
-  if (!setupComplete && activeViewId === "COMMAND_DECK") return <FirstRunSetup onComplete={completeFirstRunSetup} />;
+  if (!setupComplete && activeViewId === "COMMAND_DECK") return <FirstRunSetup onComplete={completeFirstRunSetup} onConfigureSandbox={configureSandbox} />;
 
   return (
     <main className="luma-canvas fullscreen-canvas">
@@ -389,7 +407,7 @@ export default function Home() {
             <IncidentDeck plane={controlPlane} />
             <LiveTerminal stream={terminalStream} />
 
-            <HealthSummaryCard data={mockHealthData.HEALTHY} />
+            <HealthSummaryCard data={health.data} isLoading={health.isLoading} error={health.error} />
 
             <article className="archive-module glass-surface is-workspace-card">
               <div className="archive-workspace-card">{renderWorkspaceCard()}</div>

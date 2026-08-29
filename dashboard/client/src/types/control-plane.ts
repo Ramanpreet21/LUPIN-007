@@ -32,7 +32,8 @@ export type ControlPlaneEvent =
       type: "execution_complete";
       incident_id: string;
       payload: { status: ExecutionStatus };
-    };
+    }
+  | { type: "sandbox_started"; incident_id: string; payload: { sandbox_id: string; thread_id?: string; created_at: string } };
 
 export type IncidentDeckStatus =
   | "diagnosing"

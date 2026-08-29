@@ -9,7 +9,7 @@ import type {
 } from "@/types/control-plane";
 
 /** Control-plane origin/WS endpoints (blueprint §7). Overridable via env. */
-const CONTROL_PLANE_ORIGIN =
+export const CONTROL_PLANE_ORIGIN =
   import.meta.env.VITE_CONTROL_PLANE_ORIGIN ?? "http://localhost:3000";
 const CONTROL_PLANE_WS =
   import.meta.env.VITE_CONTROL_PLANE_WS ?? "ws://localhost:3000/ws";
@@ -104,6 +104,8 @@ export interface UseControlPlaneReturn {
   isExecuting: boolean;
   /** Executions rejected or failed this session (live policy-block proxy). */
   blockedExecutionCount: number;
+  /** Most recent sandbox.created relay (null until a sandbox starts). */
+  sandbox: { incident_id: string; sandbox_id: string; created_at: string } | null;
   /** POST an operator decision to /api/approvals; rejects on non-2xx. */
   approve: (incidentId: string) => Promise<void>;
   reject: (incidentId: string) => Promise<void>;
@@ -120,6 +122,7 @@ export function useControlPlane(): UseControlPlaneReturn {
   const [terminalChunk, setTerminalChunk] = useState("");
   // Monotonic count of transcript characters appended to the bounded window.
   const terminalCursorRef = useRef(0);
+  const [activeSandbox, setActiveSandbox] = useState<{ incident_id: string; sandbox_id: string; created_at: string } | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -189,6 +192,16 @@ export function useControlPlane(): UseControlPlaneReturn {
             pending: null,
           })),
         );
+        break;
+      case "sandbox_started":
+        setActiveSandbox({
+          incident_id: event.incident_id,
+          sandbox_id: String(event.payload.sandbox_id ?? ""),
+          created_at:
+            typeof event.payload.created_at === "string"
+              ? event.payload.created_at
+              : new Date().toISOString(),
+        });
         break;
     }
 
@@ -276,6 +289,7 @@ export function useControlPlane(): UseControlPlaneReturn {
     terminalCursor: terminalCursorRef.current,
     isExecuting,
     blockedExecutionCount,
+    sandbox: activeSandbox,
     approve: (incidentId) => decide(incidentId, "approved"),
     reject: (incidentId) => decide(incidentId, "rejected"),
   };
