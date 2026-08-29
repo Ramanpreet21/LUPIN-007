@@ -171,7 +171,16 @@ test("POST /api/policy/simulate returns an AST simulation and 400 on empty input
 
 test("GET/PUT /api/settings/model roundtrips without leaking the key", async () => {
   resetModelSettings();
-  const handle: TrueForgeHandle = { client: null, status: readyStatus };
+  // Minimal mock: client present, createOrUpdate resolves successfully.
+  // This is the normal case the test is named for — roundtrip + no key leak.
+  const mockClient = {
+    settings: {
+      modelProviders: {
+        createOrUpdate: async () => {},
+      },
+    },
+  } as unknown as NonNullable<TrueForgeHandle["client"]>;
+  const handle: TrueForgeHandle = { client: mockClient, status: readyStatus };
   const server = await withRouters(() => handle, () => readyStatus);
   try {
     const base = `http://127.0.0.1:${server.port}`;
@@ -181,7 +190,7 @@ test("GET/PUT /api/settings/model roundtrips without leaking the key", async () 
     const put = await fetch(`${base}/api/settings/model`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ apiKey: "sk-ant-test" }),
+      body: JSON.stringify({ apiKey: "sk-test-key-rotated-abc123" }),
     });
     assert.equal(put.status, 200);
     const putBody = (await put.json()) as Record<string, unknown>;

@@ -52,6 +52,7 @@ export function execReadOnly(
 
     let stdout = "";
     let stderr = "";
+    let totalBytes = 0;
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -67,17 +68,21 @@ export function execReadOnly(
       settle(() => reject(new Error(`command timed out after ${timeoutMs}ms: ${command}`)));
     }, timeoutMs);
 
+    // Accumulate stdout/stderr and enforce a combined byte ceiling.
+    // Use chunk.length (byte count) rather than character count after toString()
+    // so multi-byte UTF-8 characters are counted accurately.
     const onData = (kind: "stdout" | "stderr") => (chunk: Buffer): void => {
-      const next = (kind === "stdout" ? stdout : stderr) + chunk.toString("utf8");
-      if (next.length > maxBufferBytes) {
+      totalBytes += chunk.length;
+      if (totalBytes > maxBufferBytes) {
         child.kill("SIGTERM");
         settle(() =>
-          reject(new Error(`command output exceeded ${maxBufferBytes} bytes: ${command}`)),
+          reject(new Error(`combined output exceeded ${maxBufferBytes} bytes: ${command}`)),
         );
         return;
       }
-      if (kind === "stdout") stdout = next;
-      else stderr = next;
+      const text = chunk.toString("utf8");
+      if (kind === "stdout") stdout += text;
+      else stderr += text;
     };
     child.stdout?.on("data", onData("stdout"));
     child.stderr?.on("data", onData("stderr"));

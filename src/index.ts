@@ -91,7 +91,7 @@ async function main(): Promise<void> {
         app.use(createIncidentRouter({ getTf: () => tf, logger, broadcast, model: config.trueforgeModel }));
         app.use(createSandboxRouter({ getTf: () => tf, logger }));
 
-        app.use(createModelRouter({ logger, getTf: () => tf, model: config.trueforgeModel }));
+        app.use(createModelRouter({ logger, getTf: () => tf, model: config.trueforgeModel, apiToken: config.controlPlaneApiToken }));
       },
     });
   } catch (err) {

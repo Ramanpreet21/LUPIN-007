@@ -14,6 +14,12 @@ export interface AppConfig {
    * If omitted the MCP URL is derived from bind address (same-host only).
    */
   controlPlaneUrl?: string;
+  /**
+   * Bearer token for the control plane's settings API.
+   * Required on all mutating endpoints (/api/settings/model PUT).
+   * The dashboard must send this as Authorization: Bearer <token>.
+   */
+  controlPlaneApiToken?: string;
   /** Model FQN (provider/model) used for sandbox-enabled incident sessions. */
   trueforgeModel: string;
 }
@@ -51,6 +57,7 @@ export function loadConfig(env: NodeJS.ProcessEnv, cli: CliOptions = {}): AppCon
     trueforgeBaseUrl: env.TRUEFORGE_BASE_URL || undefined,
     trueforgeToken: env.TRUEFORGE_TOKEN || undefined,
     controlPlaneUrl: env.CONTROL_PLANE_URL || undefined,
+    controlPlaneApiToken: env.CONTROL_PLANE_API_TOKEN || undefined,
     trueforgeModel: env.TRUEFORGE_MODEL || DEFAULT_TRUEFORGE_MODEL,
   };
 }

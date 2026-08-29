@@ -142,8 +142,10 @@ function exeBase(token: string): string {
 /**
  * Simulate a single statement through the active rules. Returns a partial result
  * (command, highest node, score delta) that `simulatePolicyRule` merges across statements.
+ * `stmtIdx` is used to prefix all node IDs so they are globally unique across
+ * multi-statement commands (finding #N: AST node IDs collide on merge).
  */
-function scoreStatement(statement: string): {
+function scoreStatement(statement: string, stmtIdx: number): {
   nodes: AstNode[];
   high: number;
   medium: number;
@@ -154,11 +156,11 @@ function scoreStatement(statement: string): {
   const args = tokens.slice(1).map((t) => t.word).filter(Boolean);
 
   const nodes: AstNode[] = [
-    { id: "root", label: "Command", kind: executable || "(none)", risk: "low" },
+    { id: `${stmtIdx}:root`, label: "Command", kind: executable || "(none)", risk: "low" },
   ];
   args.forEach((arg, i) => {
     nodes.push({
-      id: `arg-${i}`,
+      id: `${stmtIdx}:arg-${i}`,
       label: arg.startsWith("-") ? "Flag" : i === 0 ? "Path" : "Argument",
       kind: arg,
       risk: "low",
@@ -208,9 +210,10 @@ export function simulatePolicyRule(command: string): AstSimulation {
   let worstHigh = 0;
   let worstMedium = 0;
 
-  for (const stmt of statements) {
+  for (let stmtIdx = 0; stmtIdx < statements.length; stmtIdx++) {
+    const stmt = statements[stmtIdx];
     const effective = effectiveCommand(stmt);
-    const { nodes, high, medium } = scoreStatement(effective);
+    const { nodes, high, medium } = scoreStatement(effective, stmtIdx);
     allNodes.push(...nodes);
     totalHigh += high;
     totalMedium += medium;

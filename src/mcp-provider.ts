@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { realpathSync } from "node:fs";
+import { openSync, closeSync } from "node:fs";
 import { execReadOnly, type ExecError, type ReadOnlyExecutor } from "./exec-readonly";
 
 export const LOCAL_MCP_NAME = "incident-deck-mcp";
@@ -206,17 +207,27 @@ async function callTool(
         const path = str(params.path);
         if (!path || path.includes(".."))
           return { error: error(-32602, "file_read path must not contain '..'") };
-        // Resolve symlinks before the prefix check so symlink traversal is blocked.
+        // Resolve symlinks before the allowlist check to block symlink-traversal.
+        // Use /dev/fd/ to open a file descriptor at check time so the path
+        // cannot be swapped out between the allowlist check and the read (TOCTOU).
         let resolved: string;
+        let fd: number;
         try {
           resolved = realpathSync(path);
+          fd = openSync(resolved, "r");
         } catch {
           return { error: error(-32602, "file_read: path does not exist or is inaccessible") };
         }
         const allowed = ALLOWED_READ_PREFIXES.some((p) => resolved.startsWith(p));
-        if (!allowed)
+        if (!allowed) {
+          closeSync(fd);
           return { error: error(-32602, `file_read path must be under: ${ALLOWED_READ_PREFIXES.join(", ")}`) };
-        return { result: text(await executor("cat", [path])) };
+        }
+        try {
+          return { result: text(await executor("cat", [`/dev/fd/${fd}`])) };
+        } finally {
+          closeSync(fd);
+        }
       }
       case "dns_lookup": {
         const hostname = str(params.hostname);
