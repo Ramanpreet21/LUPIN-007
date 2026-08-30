@@ -235,3 +235,64 @@ test("GET /api/settings/sandbox reflects provider status after configuration", a
     await server.close();
   }
 });
+
+test("PUT /api/settings/sandbox rejects unauthorized requests when apiToken is configured", async () => {
+  const state: ProviderState = { data: { status: "ready", statusReason: null }, createCalls: [] };
+  const { handle } = makeSandboxHandle(state);
+  const server = await startServer({
+    host: "127.0.0.1",
+    port: 0,
+    logger,
+    getStatus: () => handle.status,
+    registerRoutes: (app) => {
+      app.use(createSandboxRouter({ getTf: () => handle, logger, apiToken: "secret-token-123" }));
+    },
+  });
+  try {
+    const unauth = await fetch(`${baseUrl(server.port)}/api/settings/sandbox`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ apiKey: "daytona_test_key" }),
+    });
+    assert.equal(unauth.status, 401);
+
+    const authed = await fetch(`${baseUrl(server.port)}/api/settings/sandbox`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        "authorization": "Bearer secret-token-123",
+      },
+      body: JSON.stringify({ apiKey: "daytona_test_key" }),
+    });
+    assert.equal(authed.status, 200);
+  } finally {
+    await server.close();
+  }
+});
+
+test("PUT /api/settings/sandbox with unavailable local docker/podman returns 400 probe failed", async () => {
+  const state: ProviderState = { data: { status: "ready", statusReason: null }, createCalls: [] };
+  const { handle } = makeSandboxHandle(state);
+  const server = await startServer({
+    host: "127.0.0.1",
+    port: 0,
+    logger,
+    getStatus: () => handle.status,
+    registerRoutes: (app) => {
+      app.use(createSandboxRouter({ getTf: () => handle, logger }));
+    },
+  });
+  try {
+    const res = await fetch(`${baseUrl(server.port)}/api/settings/sandbox`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: "docker", serverUrl: "/nonexistent/socket/path.sock" }),
+    });
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error: string };
+    assert.equal(body.error, "sandbox_probe_failed");
+  } finally {
+    await server.close();
+  }
+});
+

@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS session_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_session_messages_session ON session_messages(session_id, created_at);
 
+-- General settings store for non-secret configuration. Sensitive secrets (e.g. Daytona/Model API keys)
+-- are kept strictly in-memory and must never be persisted in this table.
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL

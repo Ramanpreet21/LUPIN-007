@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { getDb } from "../db";
+import { getDaytonaApiKey } from "../sandbox-settings";
 import type { SandboxRunner, SandboxProbeResult, SandboxType, SandboxExecResult } from "./types";
 import { IsolatedProcessRunner } from "./isolated-process-runner";
 import { PodmanRunner, DockerRunner } from "./container-runners";
@@ -56,11 +58,13 @@ export class SandboxManager {
       // Fallback
     }
 
-    const probePromises = Array.from(this.runners.entries()).map(async ([type, runner]) => {
+    const probes: SandboxProbeResult[] = [];
+
+    for (const [type, runner] of this.runners.entries()) {
       let config: { socketPath?: string; serverUrl?: string; apiKey?: string } | undefined;
       if (type === "daytona" || type === "daytona-custom") {
         config = {
-          apiKey: dbSettings.sandbox_key || dbSettings.daytona_api_key,
+          apiKey: getDaytonaApiKey(),
           serverUrl: dbSettings.sandbox_url,
         };
       } else if (type === "podman" || type === "docker") {
@@ -69,28 +73,18 @@ export class SandboxManager {
         };
       }
 
-      return runner.probe(config);
-    });
-
-    const results = await Promise.allSettled(probePromises);
-    const probes: SandboxProbeResult[] = results.map((res, i) => {
-      if (res.status === "fulfilled") return res.value;
-      const type = Array.from(this.runners.keys())[i];
-      return {
-        available: false,
-        type,
-        error: res.reason instanceof Error ? res.reason.message : String(res.reason),
-      };
-    });
+      const res = await runner.probe(config);
+      probes.push(res);
+    }
 
     return { activeProvider, probes };
   }
 
   async execInActive(command: string, opts?: { timeoutMs?: number; cwd?: string }): Promise<SandboxExecResult> {
     const runner = this.getActiveRunner();
-    const sessionId = `test-${Date.now()}`;
-    await runner.createSession(sessionId);
+    const sessionId = `test-${Date.now()}-${randomUUID()}`;
     try {
+      await runner.createSession(sessionId);
       return await runner.exec(sessionId, command, opts);
     } finally {
       await runner.destroySession(sessionId);
