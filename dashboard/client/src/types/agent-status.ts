@@ -1,11 +1,11 @@
 /** LUMA GLASS DESIGN REMINDER: pure stream-ready data contract for the cutout status bar. */
 export type SSHStatus = "CONNECTED" | "DISCONNECTED" | "RECONNECTING";
-export type EngineMode = "LOCAL_MODE" | "HOSTED_MODE";
-export type ContainerRuntime = "PODMAN" | "DOCKER";
-export type SkillStatus = "READY" | "EXECUTING" | "RESTRICTED";
+export type EngineMode = "LOCAL_MODE" | "HOSTED_MODE" | "agentic" | "fallback";
+export type ContainerRuntime = "PODMAN" | "DOCKER" | "sandbox" | "docker" | "native" | "unconfigured";
+export type SkillStatus = "READY" | "EXECUTING" | "RESTRICTED" | "active" | "loading" | "error" | "disabled";
 export type ExecutionPolicy = "POLICY_GATED" | "AUTONOMOUS";
 export type ApprovalMode = "AUTONOMOUS" | "STRICT_GATED";
-export type SandboxState = "COLD" | "ACTIVE" | "TEST_BUILDING";
+export type SandboxState = "COLD" | "ACTIVE" | "TEST_BUILDING" | "READY" | "UNCONFIGURED";
 
 export interface AgentSkill {
   id: string;
@@ -36,4 +36,6 @@ export interface AgentStatusCapabilitiesBarProps {
   hasApiKey?: boolean;
   onOpenSettings?: () => void;
   className?: string;
+  models?: Array<{ id: string; name: string }>;
+  onModelChange?: (modelId: string) => void;
 }
