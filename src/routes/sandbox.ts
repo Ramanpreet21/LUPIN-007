@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import type { Logger } from "../logger";
 import type { TrueForgeHandle } from "../trueforge";
-import { getSandboxSettings, updateSandboxSettings, setDaytonaApiKey } from "../sandbox-settings";
+import { getSandboxSettings, updateSandboxSettings, setDaytonaApiKey, getDaytonaApiKey } from "../sandbox-settings";
 import { getSandboxManager } from "../sandboxes/manager";
 import type { SandboxType } from "../sandboxes/types";
 import { getDb } from "../db";
@@ -84,7 +84,7 @@ export function createSandboxRouter({ getTf, logger, broadcast, apiToken }: Sand
       }
 
       const settingsMap: Record<string, string | boolean> = {};
-      let hasSandboxKey = false;
+      let hasSandboxKey = Boolean(getDaytonaApiKey());
       for (const row of rows) {
         if (row.key === "sandbox_key" || row.key === "daytona_api_key") {
           if (row.value && row.value.trim().length > 0) {
