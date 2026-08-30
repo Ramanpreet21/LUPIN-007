@@ -294,4 +294,31 @@ describe("sessions routes", () => {
       s.close();
     }
   });
+
+  it("GET /api/sessions/:id/messages returns messages in chronological order", async () => {
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO sessions (id, thread_id, incident_id, summary, created_at)
+       VALUES ('sess-msg-test', null, null, 'Message test', '2026-08-30T12:00:00.000Z')`
+    ).run();
+
+    db.prepare(
+      `INSERT INTO session_messages (id, session_id, role, label, content, created_at)
+       VALUES ('m1', 'sess-msg-test', 'user', 'OPERATOR', 'Hello agent', '2026-08-30T12:01:00.000Z'),
+              ('m2', 'sess-msg-test', 'assistant', 'LUPIN', 'Hello! How can I help?', '2026-08-30T12:02:00.000Z')`
+    ).run();
+
+    const res = await fetch(`${baseUrl}/api/sessions/sess-msg-test/messages`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      data: Array<{ id: string; session_id: string; role: string; label: string; content: string; created_at: string }>;
+    };
+    assert.equal(body.data.length, 2);
+    assert.equal(body.data[0].id, "m1");
+    assert.equal(body.data[0].role, "user");
+    assert.equal(body.data[0].content, "Hello agent");
+    assert.equal(body.data[1].id, "m2");
+    assert.equal(body.data[1].role, "assistant");
+    assert.equal(body.data[1].content, "Hello! How can I help?");
+  });
 });

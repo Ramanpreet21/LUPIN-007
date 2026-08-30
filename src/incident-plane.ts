@@ -989,6 +989,23 @@ export function createIncidentRouter({
       } catch { /* ignore db error */ }
     }
 
+    try {
+      const dbInstance = getDb();
+      dbInstance.prepare(
+        `INSERT INTO session_messages (id, session_id, role, label, content, created_at)
+         VALUES (@id, @session_id, @role, @label, @content, @created_at)`
+      ).run({
+        id: `msg-user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        session_id: sessionId,
+        role: "user",
+        label: "OPERATOR",
+        content: message,
+        created_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      logger.warn({ event: "persist_user_msg_err", err }, "Failed to persist user message");
+    }
+
     res.status(202).json({ status: "accepted", session_id: sessionId });
 
     void (async () => {
@@ -996,7 +1013,27 @@ export function createIncidentRouter({
       let fullResponse = "";
       let step = 0;
 
-      if (tfSessionCreated && client && tf.status.state === "ready") {
+      const persistAssistantMessage = (content: string) => {
+        try {
+          const dbInstance = getDb();
+          dbInstance.prepare(
+            `INSERT INTO session_messages (id, session_id, role, label, content, created_at)
+             VALUES (@id, @session_id, @role, @label, @content, @created_at)`
+          ).run({
+            id: `msg-asst-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            session_id: activeSession,
+            role: "assistant",
+            label: "LUPIN",
+            content,
+            created_at: new Date().toISOString(),
+          });
+        } catch (err) {
+          logger.warn({ event: "persist_assistant_msg_err", err }, "Failed to persist assistant message");
+        }
+      };
+
+      const isTfSession = tfSessionCreated || (Boolean(activeSession) && !activeSession.startsWith("session-"));
+      if (isTfSession && client && tf.status.state === "ready") {
         try {
           const stream = await client.sessions.createTurnStream(activeSession, {
             input: [{ type: "user.message", content: message }],
@@ -1047,10 +1084,12 @@ export function createIncidentRouter({
                     }
                   }
                 } catch { /* raw text */ }
+                const finalContent = formatted || "Action completed.";
+                persistAssistantMessage(finalContent);
                 broadcast({
                   type: "converse_complete",
                   session_id: activeSession,
-                  payload: { content: formatted || "Action completed.", status: "done" },
+                  payload: { content: finalContent, status: "done" },
                 });
                 return;
               }
@@ -1071,10 +1110,12 @@ export function createIncidentRouter({
                 }
               }
             } catch { /* raw text */ }
+            const finalContent = formatted || "Action completed.";
+            persistAssistantMessage(finalContent);
             broadcast({
               type: "converse_complete",
               session_id: activeSession,
-              payload: { content: formatted, status: "done" },
+              payload: { content: finalContent, status: "done" },
             });
             return;
           }
@@ -1095,6 +1136,7 @@ export function createIncidentRouter({
         await new Promise((r) => setTimeout(r, 40));
       }
 
+      persistAssistantMessage(localResult.response);
       broadcast({
         type: "converse_complete",
         session_id: activeSession,

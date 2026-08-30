@@ -699,19 +699,52 @@ export default function Home() {
 
   const handleSelectSession = useCallback((sessionId: string) => {
     setActiveSessionId(sessionId);
-    setConversationMessages([
-      {
-        id: `sys-${Date.now()}`,
-        role: "system",
-        label: "SYSTEM",
-        time: "NOW",
-        content: `Switched context to session: ${sessionId}`,
-      },
-    ]);
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/sessions/${sessionId}/messages`)
+      .then((r) => r.json())
+      .then((d: { data?: Array<{ id: string; role: string; label: string; content: string; created_at: string }> }) => {
+        if (Array.isArray(d?.data) && d.data.length > 0) {
+          setConversationMessages(
+            d.data.map((m) => ({
+              id: m.id,
+              role: (m.role === "user" ? "user" : m.role === "system" ? "system" : "assistant") as "user" | "assistant" | "system",
+              label: m.label || (m.role === "user" ? "OPERATOR" : "LUPIN"),
+              time: m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "NOW",
+              content: m.content,
+            })),
+          );
+        } else {
+          setConversationMessages([
+            {
+              id: `sys-${Date.now()}`,
+              role: "system",
+              label: "SYSTEM",
+              time: "NOW",
+              content: `Switched context to session: ${sessionId}`,
+            },
+          ]);
+        }
+      })
+      .catch(() => {
+        setConversationMessages([
+          {
+            id: `sys-${Date.now()}`,
+            role: "system",
+            label: "SYSTEM",
+            time: "NOW",
+            content: `Switched context to session: ${sessionId}`,
+          },
+        ]);
+      });
   }, []);
 
   const handleDeleteSession = useCallback((deletedId: string) => {
-    setActiveSessionId((current) => (current === deletedId ? null : current));
+    setActiveSessionId((current) => {
+      if (current === deletedId) {
+        setConversationMessages([]);
+        return null;
+      }
+      return current;
+    });
   }, []);
 
   const submitConversation = (event: FormEvent<HTMLFormElement>) => {
@@ -725,18 +758,25 @@ export default function Home() {
       { id: `streaming-${Date.now()}`, role: "assistant", label: "LUPIN", time, content: "Analyzing request with TrueForge..." },
     ]);
     setDraft("");
-    void controlPlane.converse(message, activeSessionId ?? undefined).catch((err) => {
-      setConversationMessages((current) => [
-        ...current.filter((m) => !m.id.startsWith("streaming-")),
-        {
-          id: `err-${Date.now()}`,
-          role: "system",
-          label: "SYSTEM",
-          time: "NOW",
-          content: `Failed to dispatch to TrueForge: ${err instanceof Error ? err.message : String(err)}`,
-        },
-      ]);
-    });
+    void controlPlane
+      .converse(message, activeSessionId ?? undefined)
+      .then((res) => {
+        if (res?.session_id && !activeSessionId) {
+          setActiveSessionId(res.session_id);
+        }
+      })
+      .catch((err) => {
+        setConversationMessages((current) => [
+          ...current.filter((m) => !m.id.startsWith("streaming-")),
+          {
+            id: `err-${Date.now()}`,
+            role: "system",
+            label: "SYSTEM",
+            time: "NOW",
+            content: `Failed to dispatch to TrueForge: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ]);
+      });
   };
 
   useEffect(() => {
