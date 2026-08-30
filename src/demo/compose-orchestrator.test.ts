@@ -1,7 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { detectComposeEngine, getDemoStatus } from "./compose-orchestrator";
+import { detectComposeEngine, getDemoStatus, resolveComposeFilePath } from "./compose-orchestrator";
 import { initDb, getDb } from "../db";
+
+test("resolveComposeFilePath finds docker-compose.yml in workspace root", () => {
+  const filePath = resolveComposeFilePath();
+  assert.ok(filePath.endsWith("docker-compose.yml"));
+});
 
 test("detectComposeEngine detects installed docker or podman runtime", async () => {
   const engine = await detectComposeEngine();

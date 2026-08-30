@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import net from "node:net";
 import path from "node:path";
+import fs from "node:fs";
 import { getDb } from "../db";
 import { probeCliBinary, probeUnixSocket } from "../sandboxes/socket-probe";
 
@@ -85,12 +86,29 @@ async function waitForPort(host: string, port: number, timeoutMs = 10000): Promi
   return false;
 }
 
+export function resolveComposeFilePath(workspaceRoot = process.cwd()): string {
+  const candidates = [
+    path.join(workspaceRoot, "docker-compose.yml"),
+    path.resolve(workspaceRoot, "docker-compose.yml"),
+    path.resolve(__dirname, "../../docker-compose.yml"),
+    path.resolve(__dirname, "../../../docker-compose.yml"),
+    path.resolve(process.cwd(), "docker-compose.yml"),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return path.join(workspaceRoot, "docker-compose.yml");
+}
+
 export async function startDemoStack(
   broadcast?: (event: { type: string; payload: unknown }) => void,
   workspaceRoot = process.cwd()
 ): Promise<{ ok: boolean; engine: string; sshReady: boolean; error?: string }> {
   const engine = await detectComposeEngine();
-  const composeFile = path.join(workspaceRoot, "docker-compose.yml");
+  const composeFile = resolveComposeFilePath(workspaceRoot);
 
   try {
     const args = [...engine.composeArgs, "-f", composeFile, "up", "-d"];
@@ -104,8 +122,13 @@ export async function startDemoStack(
     };
   }
 
-  // Wait for SSH port 2222 on tf-server
-  const sshReady = await waitForPort("127.0.0.1", 2222, 10000);
+  // Poll for SSH port 2222 on tf-server with retries up to 15 seconds
+  let sshReady = false;
+  for (let attempt = 0; attempt < 15; attempt++) {
+    sshReady = await waitForPort("127.0.0.1", 2222, 1000);
+    if (sshReady) break;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
 
   // Auto-register cluster fleet hosts into SQLite database
   try {
@@ -138,8 +161,8 @@ export async function startDemoStack(
     insertHost.run({
       id: "node-client1",
       hostname: "client1",
-      ip: "client1",
-      port: 22,
+      ip: "127.0.0.1",
+      port: 2223,
       ssh_user: "root",
       last_probe_status: "online",
       os_info: "Alpine Linux (Database / Redis)",
@@ -149,8 +172,8 @@ export async function startDemoStack(
     insertHost.run({
       id: "node-client2",
       hostname: "client2",
-      ip: "client2",
-      port: 22,
+      ip: "127.0.0.1",
+      port: 2224,
       ssh_user: "root",
       last_probe_status: "online",
       os_info: "Alpine Linux (Web / Apache / PHP)",
@@ -160,8 +183,8 @@ export async function startDemoStack(
     insertHost.run({
       id: "node-client3",
       hostname: "client3",
-      ip: "client3",
-      port: 22,
+      ip: "127.0.0.1",
+      port: 2225,
       ssh_user: "root",
       last_probe_status: "online",
       os_info: "Alpine Linux (App / Python / Node)",
@@ -171,8 +194,8 @@ export async function startDemoStack(
     insertHost.run({
       id: "node-attacker",
       hostname: "attacker",
-      ip: "attacker",
-      port: 22,
+      ip: "127.0.0.1",
+      port: 2226,
       ssh_user: "root",
       last_probe_status: "online",
       os_info: "Alpine Linux (Security Auditor)",
@@ -189,7 +212,7 @@ export async function startDemoStack(
 
     broadcast?.({
       type: "fleet_updated",
-      payload: { count: 5, source: "demo_compose" },
+      payload: { count: 5 },
     });
 
     broadcast?.({
@@ -210,7 +233,7 @@ export async function startDemoStack(
 
 export async function stopDemoStack(workspaceRoot = process.cwd()): Promise<{ ok: boolean; error?: string }> {
   const engine = await detectComposeEngine();
-  const composeFile = path.join(workspaceRoot, "docker-compose.yml");
+  const composeFile = resolveComposeFilePath(workspaceRoot);
 
   try {
     const args = [...engine.composeArgs, "-f", composeFile, "down"];
@@ -226,7 +249,7 @@ export async function stopDemoStack(workspaceRoot = process.cwd()): Promise<{ ok
 
 export async function getDemoStatus(workspaceRoot = process.cwd()): Promise<DemoStatusResult> {
   const engine = await detectComposeEngine();
-  const composeFile = path.join(workspaceRoot, "docker-compose.yml");
+  const composeFile = resolveComposeFilePath(workspaceRoot);
 
   try {
     const args = [...engine.composeArgs, "-f", composeFile, "ps", "--format", "json"];
