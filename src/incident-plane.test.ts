@@ -5,7 +5,7 @@ import { createLogger } from "./logger";
 import { startServer } from "./server";
 import type { TrueForgeHandle } from "./trueforge";
 import { computeSafetyBadges, createIncidentRouter } from "./incident-plane";
-import { createIncident, setIncidentStatus } from "./incidents";
+import { createIncident, getIncident, listIncidents, patchIncident, setIncidentStatus } from "./incidents";
 import type { TrueForgeApi } from "@truefoundry/trueforge-sdk";
 
 type TurnStreamingEvent = TrueForgeApi.TurnStreamingEvent;
@@ -824,6 +824,86 @@ test("GET /incidents lists the store newest-first with status/limit filtering", 
     assert.equal(malformed.status, 200);
     const malformedBody = (await malformed.json()) as { data: unknown[] };
     assert.ok(malformedBody.data.length <= 50, "malformed limit stays capped at 50");
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /api/emergency-stop cancels active sessions and fails diagnosing/awaiting incidents", async () => {
+  const fake = makeFakeHandle([], []);
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    const inc1 = createIncident({ service_name: "svc-stop-1", target_host: "h1", severity: "warning" });
+    const inc2 = createIncident({ service_name: "svc-stop-2", target_host: "h2", severity: "critical" });
+    assert.ok(inc1 && inc2);
+    // inc1 is diagnosing with a session
+    patchIncident(inc1.id, { sessionId: "sess-stop-1" });
+    // inc2 is awaiting_approval with a session
+    patchIncident(inc2.id, { sessionId: "sess-stop-2" });
+    setIncidentStatus(inc2.id, "awaiting_approval");
+
+    const res = await postJson(`http://127.0.0.1:${server.port}/api/emergency-stop`, "{}");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { status: string; cancelled: number };
+    assert.equal(body.status, "ok");
+    assert.ok(body.cancelled >= 2);
+
+    // Verify both sessions were cancelled via the TrueForge client
+    assert.ok(fake.cancelled.includes("sess-stop-1"));
+    assert.ok(fake.cancelled.includes("sess-stop-2"));
+
+    // Verify incident statuses are marked failed in the store
+    assert.equal(getIncident(inc1.id)?.status, "failed");
+    assert.equal(getIncident(inc2.id)?.status, "failed");
+
+    // Verify execution_complete broadcasts occurred
+    const event1 = await ws.waitFor("execution_complete");
+    assert.equal(event1.payload.status, "failed");
+  } finally {
+    ws.close();
+    await server.close();
+  }
+});
+
+test("POST /api/emergency-stop returns cancelled 0 when no incidents are active", async () => {
+  const fake = makeFakeHandle([], []);
+  const server = await withServer(fake.handle);
+  try {
+    // Note: ensure no active incidents remain from previous tests by setting any active ones to completed
+    const active = listIncidents({ status: "diagnosing" }).concat(listIncidents({ status: "awaiting_approval" }));
+    for (const inc of active) {
+      setIncidentStatus(inc.id, "completed");
+    }
+
+    const res = await postJson(`http://127.0.0.1:${server.port}/api/emergency-stop`, "{}");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { status: string; cancelled: number };
+    assert.deepEqual(body, { status: "ok", cancelled: 0 });
+    assert.equal(fake.cancelled.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /api/emergency-stop handles session cancellation errors gracefully (best-effort)", async () => {
+  const fake = makeFakeHandle([], []);
+  // Make client.sessions.cancel throw
+  fake.handle.client!.sessions.cancel = (async () => {
+    throw new Error("cancellation network timeout");
+  }) as any;
+  const server = await withServer(fake.handle);
+  try {
+    const inc = createIncident({ service_name: "svc-err-1", target_host: "h1", severity: "warning" });
+    assert.ok(inc);
+    patchIncident(inc.id, { sessionId: "sess-throw-1" });
+
+    const res = await postJson(`http://127.0.0.1:${server.port}/api/emergency-stop`, "{}");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { status: string; cancelled: number };
+    assert.equal(body.status, "ok");
+    assert.ok(body.cancelled >= 1);
+    assert.equal(getIncident(inc.id)?.status, "failed");
   } finally {
     await server.close();
   }

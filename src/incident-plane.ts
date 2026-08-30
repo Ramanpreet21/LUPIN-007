@@ -652,5 +652,29 @@ export function createIncidentRouter({
     res.json({ data: rows });
   });
 
+  router.post("/api/emergency-stop", async (_req: Request, res: Response) => {
+    const client = getTf().client;
+    const active = listIncidents({ status: "diagnosing" }).concat(listIncidents({ status: "awaiting_approval" }));
+    let cancelled = 0;
+
+    for (const incident of active) {
+      if (incident.sessionId && client) {
+        try {
+          await client.sessions.cancel(incident.sessionId);
+        } catch { /* best-effort cancellation */ }
+      }
+      setIncidentStatus(incident.id, "failed");
+      broadcast({
+        type: "execution_complete",
+        incident_id: incident.id,
+        payload: { status: "failed" },
+      });
+      cancelled++;
+    }
+
+    logger.info({ event: "emergency_stop", cancelled }, "emergency stop executed");
+    res.json({ status: "ok", cancelled });
+  });
+
   return router;
 }
