@@ -8,11 +8,17 @@ import type {
   IncidentDeckStatus,
 } from "@/types/control-plane";
 
-/** Control-plane origin/WS endpoints (blueprint §7). Overridable via env. */
 export const CONTROL_PLANE_ORIGIN =
-  import.meta.env.VITE_CONTROL_PLANE_ORIGIN ?? "http://localhost:3000";
-const CONTROL_PLANE_WS =
-  import.meta.env.VITE_CONTROL_PLANE_WS ?? "ws://localhost:3000/ws";
+  import.meta.env.VITE_CONTROL_PLANE_ORIGIN ??
+  (typeof window !== "undefined" && (window.location.port === "3000" || !window.location.port)
+    ? ""
+    : "http://localhost:3001");
+
+export const CONTROL_PLANE_WS =
+  import.meta.env.VITE_CONTROL_PLANE_WS ??
+  (typeof window !== "undefined"
+    ? `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`
+    : "ws://localhost:3001/ws");
 
 /** Bounds for the live incident list, per-incident thinking buffer, and terminal transcript. */
 const MAX_INCIDENTS = 48;

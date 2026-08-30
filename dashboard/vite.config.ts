@@ -33,6 +33,24 @@ export default defineConfig({
       strict: true,
       deny: ["**/.*"],
     },
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: true,
+      },
+      "/converse": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: true,
+      },
+      "/health": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: true,
+      },
+      "/ws": {
+        target: "ws://127.0.0.1:3001",
+        ws: true,
+      },
+    },
     headers: {
       // Disable all caching so the browser always gets fresh HMR updates
       "Cache-Control": "no-cache, no-store, must-revalidate",

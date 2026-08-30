@@ -7,9 +7,11 @@ export interface UseHealthReturn {
   error: string | null;
 }
 
-/** Control-plane origin (mirrors the same env override in useControlPlane). */
 const CONTROL_PLANE_ORIGIN =
-  import.meta.env.VITE_CONTROL_PLANE_ORIGIN ?? "http://localhost:3000";
+  import.meta.env.VITE_CONTROL_PLANE_ORIGIN ??
+  (typeof window !== "undefined" && (window.location.port === "3000" || !window.location.port)
+    ? ""
+    : "http://localhost:3001");
 
 /**
  * Polls GET /health every `pollMs` (default 10s) and exposes the latest payload.
