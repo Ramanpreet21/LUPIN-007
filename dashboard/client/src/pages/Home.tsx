@@ -709,6 +709,10 @@ export default function Home() {
     ]);
   }, []);
 
+  const handleDeleteSession = useCallback((deletedId: string) => {
+    setActiveSessionId((current) => (current === deletedId ? null : current));
+  }, []);
+
   const submitConversation = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const message = draft.trim();
@@ -968,6 +972,7 @@ export default function Home() {
             selectedSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
             onCreateSession={handleCreateSession}
+            onDeleteSession={handleDeleteSession}
             className="mt-4 border-t border-white/5 pt-2"
           />
 
