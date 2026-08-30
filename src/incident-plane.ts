@@ -1005,12 +1005,26 @@ export function createIncidentRouter({
 
           for await (const ev of stream) {
             switch (ev.type) {
+              case "model.message.delta": {
+                const delta = ev as unknown as { content?: string | null; reasoningContent?: string };
+                const text = (typeof delta.content === "string" ? delta.content : "") || delta.reasoningContent || "";
+                if (text) {
+                  step += 1;
+                  fullResponse += text;
+                  broadcast({
+                    type: "converse_thinking",
+                    session_id: activeSession,
+                    payload: { content: text, step },
+                  });
+                }
+                break;
+              }
               case "model.message": {
                 const msg = ev as ModelMessageEvent;
                 const text = textContent(msg.content) || msg.reasoningContent || "";
-                if (text) {
+                if (text && !fullResponse) {
                   step += 1;
-                  fullResponse += (fullResponse ? "\n" : "") + text;
+                  fullResponse = text;
                   broadcast({
                     type: "converse_thinking",
                     session_id: activeSession,
@@ -1020,21 +1034,47 @@ export function createIncidentRouter({
                 break;
               }
               case "turn.done": {
+                let formatted = fullResponse;
+                try {
+                  const parsed = JSON.parse(fullResponse.trim());
+                  if (parsed && typeof parsed === "object" && typeof parsed.diagnosis === "string") {
+                    formatted = parsed.diagnosis;
+                    if (parsed.recommended_action) {
+                      formatted += `\n\n**Recommended Action**: \`${parsed.recommended_action}\``;
+                    }
+                    if (Array.isArray(parsed.risks) && parsed.risks.length > 0) {
+                      formatted += `\n**Risks**: ${parsed.risks.join(", ")}`;
+                    }
+                  }
+                } catch { /* raw text */ }
                 broadcast({
                   type: "converse_complete",
                   session_id: activeSession,
-                  payload: { content: fullResponse || "Action completed.", status: "done" },
+                  payload: { content: formatted || "Action completed.", status: "done" },
                 });
-                break;
+                return;
               }
             }
           }
 
           if (fullResponse) {
+            let formatted = fullResponse;
+            try {
+              const parsed = JSON.parse(fullResponse.trim());
+              if (parsed && typeof parsed === "object" && typeof parsed.diagnosis === "string") {
+                formatted = parsed.diagnosis;
+                if (parsed.recommended_action) {
+                  formatted += `\n\n**Recommended Action**: \`${parsed.recommended_action}\``;
+                }
+                if (Array.isArray(parsed.risks) && parsed.risks.length > 0) {
+                  formatted += `\n**Risks**: ${parsed.risks.join(", ")}`;
+                }
+              }
+            } catch { /* raw text */ }
             broadcast({
               type: "converse_complete",
               session_id: activeSession,
-              payload: { content: fullResponse, status: "done" },
+              payload: { content: formatted, status: "done" },
             });
             return;
           }

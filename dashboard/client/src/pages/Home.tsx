@@ -432,9 +432,10 @@ export default function Home() {
     setConversationMessages((current) => {
       const last = current[current.length - 1];
       if (last && last.role === "assistant" && last.id.startsWith("streaming-")) {
+        const isPlaceholder = last.content === "Analyzing request with TrueForge...";
         return [
           ...current.slice(0, -1),
-          { ...last, content: `${last.content}\n${content}`.trim() },
+          { ...last, content: isPlaceholder ? content : `${last.content} ${content}`.trim() },
         ];
       }
       return [
