@@ -122,3 +122,52 @@ test("demo router rejects untrusted cross-origin requests with 403", async () =>
     await server.close();
   }
 });
+
+test("Prometheus configuration and alert_rules.yml contain all 8 required rules and valid mounts", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const workspaceRoot = path.resolve(__dirname, "../..");
+
+  // 1. Verify alert_rules.yml exists
+  const alertRulesPath = path.join(workspaceRoot, "alert_rules.yml");
+  assert.ok(fs.existsSync(alertRulesPath), "alert_rules.yml must exist at repository root");
+  const alertRulesContent = fs.readFileSync(alertRulesPath, "utf8");
+
+  // 2. Verify all 8 preset rules are present
+  const EXPECTED_RULES = [
+    "HighCPUUsage",
+    "DiskSpaceCritical",
+    "NginxDown",
+    "MySQLDown",
+    "RedisDown",
+    "HighMemoryUsage",
+    "LoadAverageHigh",
+    "SSLCertExpiring",
+  ];
+
+  for (const rule of EXPECTED_RULES) {
+    assert.ok(
+      alertRulesContent.includes(`alert: ${rule}`),
+      `alert_rules.yml must define rule: ${rule}`
+    );
+  }
+
+  // 3. Verify docker-compose.yml mounts alert_rules.yml
+  const composePath = path.join(workspaceRoot, "docker-compose.yml");
+  assert.ok(fs.existsSync(composePath), "docker-compose.yml must exist");
+  const composeContent = fs.readFileSync(composePath, "utf8");
+  assert.ok(
+    composeContent.includes("./alert_rules.yml:/etc/prometheus/alert_rules.yml:ro"),
+    "docker-compose.yml must mount ./alert_rules.yml to /etc/prometheus/alert_rules.yml:ro"
+  );
+
+  // 4. Verify prometheus.yml references /etc/prometheus/alert_rules.yml
+  const promPath = path.join(workspaceRoot, "prometheus.yml");
+  assert.ok(fs.existsSync(promPath), "prometheus.yml must exist");
+  const promContent = fs.readFileSync(promPath, "utf8");
+  assert.ok(
+    promContent.includes("/etc/prometheus/alert_rules.yml"),
+    "prometheus.yml must reference /etc/prometheus/alert_rules.yml in rule_files"
+  );
+});
+
