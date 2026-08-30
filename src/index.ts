@@ -5,6 +5,8 @@ import { initTrueForge } from "./trueforge";
 import { startServer } from "./server";
 import { createIncidentRouter } from "./incident-plane";
 import { createSandboxRouter } from "./routes/sandbox";
+import { createPolicyRouter } from "./routes/policy";
+import { initDb } from "./db";
 
 const USAGE = `incident-agent - Incident Command Deck local control plane
 
@@ -71,6 +73,8 @@ async function main(): Promise<void> {
   const config = loadConfig(process.env, { port: args.port, host: args.host });
   const logger: Logger = createLogger(config.logLevel);
 
+  const db = initDb();
+
   const tf = initTrueForge(
     { baseUrl: config.trueforgeBaseUrl, token: config.trueforgeToken },
     logger,
@@ -86,6 +90,7 @@ async function main(): Promise<void> {
       registerRoutes: (app, { broadcast }) => {
         app.use(createIncidentRouter({ getTf: () => tf, logger, broadcast, model: config.trueforgeModel }));
         app.use(createSandboxRouter({ getTf: () => tf, logger }));
+        app.use(createPolicyRouter({ logger }));
       },
     });
   } catch (err) {
