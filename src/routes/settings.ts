@@ -7,7 +7,26 @@ export interface SettingsRouterOptions {
   broadcast?: (message: unknown) => void;
 }
 
-const ALLOWED_KEYS = new Set(["enforcement_mode", "model", "sandbox_url", "operator_name", "skills", "mcps"]);
+const ALLOWED_KEYS = new Set([
+  "enforcement_mode",
+  "model",
+  "model_provider",
+  "model_api_key",
+  "configured_providers",
+  "sandbox_provider",
+  "sandbox_url",
+  "sandbox_key",
+  "openai_api_key",
+  "anthropic_api_key",
+  "gemini_api_key",
+  "fireworks_api_key",
+  "alibaba_api_key",
+  "moonshot_api_key",
+  "zai_api_key",
+  "operator_name",
+  "skills",
+  "mcps",
+]);
 
 export function createSettingsRouter(opts?: SettingsRouterOptions): Router {
   const router = Router();

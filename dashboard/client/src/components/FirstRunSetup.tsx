@@ -35,6 +35,7 @@ export interface SSHConfig {
 }
 
 export interface ModelKeysConfig {
+  provider?: string;
   apiKey?: string;
   localLlmEndpoint?: string;
   baseUrl?: string;
@@ -119,13 +120,24 @@ const DEFAULT_MODELS = [
   { id: "local", name: "Local Model (Ollama / vLLM)", provider: "Local" },
 ];
 
+const DEFAULT_PROVIDERS = [
+  { id: "google-gemini", name: "Google Gemini", defaultModel: "google-gemini/gemini-3-6-flash" },
+  { id: "anthropic", name: "Anthropic Claude", defaultModel: "anthropic/claude-sonnet-5" },
+  { id: "openai", name: "OpenAI", defaultModel: "openai/gpt-5-6-terra" },
+  { id: "fireworks", name: "Fireworks", defaultModel: "fireworks/deepseek-v4-pro" },
+  { id: "alibaba", name: "Alibaba Qwen", defaultModel: "alibaba/qwen3-8-max" },
+  { id: "zai", name: "Zhipu AI", defaultModel: "zai/glm-5-2" },
+  { id: "moonshot", name: "Moonshot", defaultModel: "moonshot/kimi-k3" },
+  { id: "local", name: "Local Model (Ollama / vLLM)", defaultModel: "local" },
+];
+
 const defaultFormState: FirstRunFormState = {
   operatorLabel: "Lead-SRE-1",
   interfaceMode: "Night",
   launchMode: "LIVE_HOST",
   defaultApprovalMode: "STRICT_GATED",
   ssh: { targetHost: "192.168.1.104", sshPort: 22, userKeyPath: "~/.ssh/id_rsa" },
-  modelKeys: { apiKey: "", localLlmEndpoint: "google-gemini/gemini-3-6-flash", baseUrl: "http://localhost:11434" },
+  modelKeys: { provider: "google-gemini", apiKey: "", localLlmEndpoint: "google-gemini/gemini-3-6-flash", baseUrl: "http://localhost:11434" },
   notifications: { enableDesktopAlerts: true, enableSoundAlerts: false },
   sandboxProvider: "daytona",
   sandboxUrl: "",
@@ -136,7 +148,7 @@ const demoFormState: FirstRunFormState = {
   operatorLabel: "Operator-1",
   launchMode: "DEMO_MOCK",
   ssh: { targetHost: "localhost", sshPort: 22, userKeyPath: "~/.ssh/id_rsa" },
-  modelKeys: { apiKey: "", localLlmEndpoint: "google-gemini/gemini-3-6-flash", baseUrl: "http://localhost:11434" },
+  modelKeys: { provider: "google-gemini", apiKey: "", localLlmEndpoint: "google-gemini/gemini-3-6-flash", baseUrl: "http://localhost:11434" },
   sandboxProvider: "daytona",
   sandboxUrl: "",
 };
@@ -214,15 +226,19 @@ export function FirstRunSetup({
   const [sandboxKey, setSandboxKey] = useState("");
   const [sandboxCheck, setSandboxCheck] = useState<{ state: "idle" | "testing" | "success" | "error"; message: string }>({ state: "idle", message: "" });
   const [connectionCheck, setConnectionCheck] = useState<{ state: "idle" | "testing" | "success" | "error"; message: string }>({ state: "idle", message: "" });
+  const [providers, setProviders] = useState(DEFAULT_PROVIDERS);
   const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>(DEFAULT_MODELS);
   const { form, setForm, update, updateSsh, updateModelKey, updateNotifications } = useFirstRunFormState();
 
   useEffect(() => {
     void fetch(`${API}/api/models`)
       .then((r) => r.json())
-      .then((data: { data: Array<{ id: string; name: string; provider: string }> }) => {
+      .then((data: { data?: Array<{ id: string; name: string; provider: string }>; providers?: typeof DEFAULT_PROVIDERS }) => {
         if (Array.isArray(data?.data)) {
           setModels(data.data);
+        }
+        if (Array.isArray(data?.providers)) {
+          setProviders(data.providers);
         }
       })
       .catch(() => {});
@@ -238,14 +254,25 @@ export function FirstRunSetup({
     }
 
     try {
+      const configured = ["google-gemini"];
+      if (completedPreferences.modelKeys.provider) {
+        configured.push(completedPreferences.modelKeys.provider);
+      }
       await fetch(`${API}/api/settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: completedPreferences.modelKeys.localLlmEndpoint ?? "",
+          model: completedPreferences.modelKeys.localLlmEndpoint || "google-gemini/gemini-3-6-flash",
+          model_provider: completedPreferences.modelKeys.provider || "google-gemini",
+          configured_providers: Array.from(new Set(configured)),
           operator_name: completedPreferences.operatorLabel,
           enforcement_mode: completedPreferences.defaultApprovalMode,
+          sandbox_provider: completedPreferences.sandboxProvider ?? "daytona",
           sandbox_url: completedPreferences.sandboxUrl ?? "",
+          ...(completedPreferences.modelKeys.apiKey ? {
+            model_api_key: completedPreferences.modelKeys.apiKey,
+            [`${(completedPreferences.modelKeys.provider || "gemini").replace("-", "_")}_api_key`]: completedPreferences.modelKeys.apiKey,
+          } : {}),
         }),
       });
 
@@ -353,7 +380,71 @@ export function FirstRunSetup({
               <div className="setup-field-grid setup-target-fields"><label className="setup-field"><span>Target host or IP</span><input value={form.ssh.targetHost} onChange={(event) => updateSsh("targetHost", event.target.value)} placeholder="192.168.1.104" autoComplete="off" /></label><label className="setup-field"><span>SSH port</span><input value={String(form.ssh.sshPort)} onChange={(event) => updateSsh("sshPort", Number(event.target.value.replace(/\D/g, "")) || 22)} inputMode="numeric" placeholder="22" /></label></div>
               <label className="setup-field"><span>User / key path</span><input value={form.ssh.userKeyPath} onChange={(event) => updateSsh("userKeyPath", event.target.value)} placeholder="~/.ssh/id_rsa" autoComplete="off" /></label>
               <div className="setup-test-row"><button type="button" className="setup-test-button" onClick={() => void testConnection()} disabled={connectionCheck.state === "testing"}>{connectionCheck.state === "testing" ? "Testing connection…" : "Test connection"}</button>{connectionCheck.state !== "idle" && <span className={`setup-test-result is-${connectionCheck.state}`} aria-live="polite">{connectionCheck.message}</span>}</div>
-              <section className="setup-model-keys" aria-label="Model configuration"><button type="button" className="setup-model-keys-trigger" onClick={() => setModelsExpanded((value) => !value)} aria-expanded={modelsExpanded}><span><KeyRound size={15} /><strong>Model configuration</strong><small>Optional local session configuration</small></span><ChevronDown size={15} /></button>{modelsExpanded && <div className="setup-model-keys-body"><label className="setup-field"><span>API key</span><span className="setup-secret-field"><input type={apiKeyVisible ? "text" : "password"} value={form.modelKeys.apiKey} onChange={(event) => updateModelKey("apiKey", event.target.value)} autoComplete="off" /><button type="button" onClick={() => setApiKeyVisible((value) => !value)} aria-label={apiKeyVisible ? "Hide API key" : "Show API key"}>{apiKeyVisible ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label><label className="setup-field"><span>LLM model</span><select value={form.modelKeys.localLlmEndpoint ?? ""} onChange={(e) => updateModelKey("localLlmEndpoint", e.target.value)} className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white/90"><option value="">Select model…</option>{models.map((m) => (<option key={m.id} value={m.id}>{m.name} ({m.provider})</option>))}</select></label>{form.modelKeys.localLlmEndpoint === "local" && (<label className="setup-field"><span>Base URL</span><input value={form.modelKeys.baseUrl ?? ""} onChange={(event) => updateModelKey("baseUrl", event.target.value)} placeholder="http://localhost:11434" autoComplete="off" /></label>)}<p className="setup-security-note"><LockKeyhole size={14} /><span><strong>Security note</strong> The API key remains in this tab's memory only and is excluded from local storage and telemetry.</span></p></div>}</section>
+              <section className="setup-model-keys" aria-label="Model configuration">
+                <button type="button" className="setup-model-keys-trigger" onClick={() => setModelsExpanded((value) => !value)} aria-expanded={modelsExpanded}>
+                  <span><KeyRound size={15} /><strong>LLM Provider configuration</strong><small>Select provider and add API credentials</small></span>
+                  <ChevronDown size={15} />
+                </button>
+                {modelsExpanded && (
+                  <div className="setup-model-keys-body">
+                    <label className="setup-field">
+                      <span>Provider</span>
+                      <select
+                        value={form.modelKeys.provider ?? "google-gemini"}
+                        onChange={(e) => {
+                          const chosen = providers.find((p) => p.id === e.target.value) || DEFAULT_PROVIDERS[0];
+                          updateModelKey("provider", chosen.id);
+                          updateModelKey("localLlmEndpoint", chosen.defaultModel);
+                        }}
+                        className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white/90"
+                      >
+                        {providers.map((p) => (
+                          <option key={p.id} value={p.id} className="bg-neutral-900 text-white">
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    {form.modelKeys.provider !== "local" ? (
+                      <label className="setup-field">
+                        <span>{providers.find((p) => p.id === (form.modelKeys.provider ?? "google-gemini"))?.name ?? "Provider"} API key</span>
+                        <span className="setup-secret-field">
+                          <input
+                            type={apiKeyVisible ? "text" : "password"}
+                            value={form.modelKeys.apiKey}
+                            onChange={(event) => updateModelKey("apiKey", event.target.value)}
+                            placeholder="Paste provider API key…"
+                            autoComplete="off"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setApiKeyVisible((value) => !value)}
+                            aria-label={apiKeyVisible ? "Hide API key" : "Show API key"}
+                          >
+                            {apiKeyVisible ? <EyeOff size={15} /> : <Eye size={15} />}
+                          </button>
+                        </span>
+                      </label>
+                    ) : (
+                      <label className="setup-field">
+                        <span>Base URL (Ollama / vLLM)</span>
+                        <input
+                          value={form.modelKeys.baseUrl ?? ""}
+                          onChange={(event) => updateModelKey("baseUrl", event.target.value)}
+                          placeholder="http://localhost:11434"
+                          autoComplete="off"
+                        />
+                      </label>
+                    )}
+
+                    <p className="setup-security-note">
+                      <LockKeyhole size={14} />
+                      <span><strong>Security note</strong> Only providers with configured API keys will appear in the active model selector.</span>
+                    </p>
+                  </div>
+                )}
+              </section>
 
               <section className="setup-model-keys" aria-label="Sandbox provider">
                 <button type="button" className="setup-model-keys-trigger" onClick={() => setSandboxExpanded((value) => !value)} aria-expanded={sandboxExpanded}>
