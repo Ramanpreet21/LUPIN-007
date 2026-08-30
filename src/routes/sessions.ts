@@ -100,6 +100,13 @@ export function createSessionsRouter(opts?: SessionsRouterOptions): Router {
     });
   });
 
+  router.get("/api/sessions/:id/messages", (req: Request, res: Response) => {
+    const id = String(req.params.id);
+    const db = getDb();
+    const rows = db.prepare("SELECT * FROM session_messages WHERE session_id = ? ORDER BY created_at ASC").all(id);
+    res.json({ data: rows });
+  });
+
   router.delete("/api/sessions/:id", async (req: Request, res: Response) => {
     const id = String(req.params.id);
     const db = getDb();
@@ -112,6 +119,7 @@ export function createSessionsRouter(opts?: SessionsRouterOptions): Router {
       } catch { /* best effort */ }
     }
 
+    db.prepare("DELETE FROM session_messages WHERE session_id = ?").run(id);
     db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
     res.json({ status: "ok", deleted: id });
   });

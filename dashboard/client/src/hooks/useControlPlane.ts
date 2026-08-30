@@ -125,7 +125,7 @@ export interface UseControlPlaneReturn {
   approve: (incidentId: string) => Promise<void>;
   reject: (incidentId: string) => Promise<void>;
   /** POST a freeform message to /converse; streams back via WebSocket callbacks. */
-  converse: (message: string, sessionId?: string) => Promise<void>;
+  converse: (message: string, sessionId?: string) => Promise<{ status: string; session_id?: string }>;
 }
 
 /**
@@ -336,7 +336,7 @@ export function useControlPlane(opts: UseControlPlaneOptions = {}): UseControlPl
     [],
   );
 
-  const converse = useCallback(async (message: string, sessionId?: string) => {
+  const converse = useCallback(async (message: string, sessionId?: string): Promise<{ status: string; session_id?: string }> => {
     const response = await fetch(`${CONTROL_PLANE_ORIGIN}/converse`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -345,7 +345,7 @@ export function useControlPlane(opts: UseControlPlaneOptions = {}): UseControlPl
     if (!response.ok) {
       throw new Error(`converse request failed (HTTP ${response.status})`);
     }
-    // Response is 202 Accepted — events stream back over the existing WebSocket
+    return (await response.json()) as { status: string; session_id?: string };
   }, []);
 
   const isExecuting = isPlaneExecuting(incidents);
