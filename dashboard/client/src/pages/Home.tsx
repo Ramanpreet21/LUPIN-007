@@ -1183,9 +1183,9 @@ export default function Home() {
                     </aside>
                   )}
                   {conversationMessages.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full min-h-[140px] text-center text-white/30 space-y-1">
-                      <p className="text-xs">No conversation messages yet.</p>
-                      <span className="text-[10px] text-white/20">Ask Lupin a question or run a diagnostic to get started.</span>
+                    <div className="flex flex-col items-center justify-center h-full min-h-[160px] text-center text-white/40 space-y-1.5 py-6">
+                      <p className="text-sm font-medium text-white/50">No conversation messages yet.</p>
+                      <span className="text-xs text-white/30">Ask Lupin a question or run a diagnostic to get started.</span>
                     </div>
                   ) : (
                     conversationMessages.map((message) => <article className={`conversation-message conversation-message--${message.role}`} key={message.id}><div className="conversation-message-meta"><span>{message.role === "assistant" && <img src="/brand-logo.png" alt="Incident Command Deck" className="h-8 w-8 object-contain" />}{message.label}</span><time>{message.time}</time></div><p>{message.content}</p></article>)
