@@ -83,6 +83,30 @@ describe("fleet routes", () => {
     assert.equal(res.status, 400);
   });
 
+  it("POST /api/fleet/hosts rejects invalid ports", async () => {
+    for (const invalidPort of [0, 65536, 70000, -1, 22.5, "22"]) {
+      const res = await fetch(`${baseUrl}/api/fleet/hosts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hostname: "test-host.local", port: invalidPort }),
+      });
+      assert.equal(res.status, 400, `Expected 400 for port ${invalidPort}, got ${res.status}`);
+      const body = await res.json() as { error: string };
+      assert.equal(body.error, "invalid_payload");
+    }
+  });
+
+  it("POST /api/fleet/probe rejects invalid port on ad-hoc probe", async () => {
+    for (const invalidPort of [0, 65536, -5, "80"]) {
+      const res = await fetch(`${baseUrl}/api/fleet/probe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hostname: "127.0.0.1", port: invalidPort }),
+      });
+      assert.equal(res.status, 400, `Expected 400 for probe port ${invalidPort}, got ${res.status}`);
+    }
+  });
+
   it("POST /api/fleet/probe returns 404 for unknown host_id", async () => {
     const res = await fetch(`${baseUrl}/api/fleet/probe`, {
       method: "POST",

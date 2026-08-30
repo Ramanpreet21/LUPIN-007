@@ -10,6 +10,10 @@ export interface FleetRouterOptions {
   broadcast?: (message: unknown) => void;
 }
 
+function isValidPort(val: unknown): val is number {
+  return typeof val === "number" && Number.isInteger(val) && val >= 1 && val <= 65535;
+}
+
 export function createFleetRouter(opts?: FleetRouterOptions): Router {
   const router = Router();
   const logger = opts?.logger;
@@ -28,6 +32,16 @@ export function createFleetRouter(opts?: FleetRouterOptions): Router {
       res.status(400).json({ error: "invalid_payload", details: ["hostname is required"] });
       return;
     }
+
+    let port = 22;
+    if (body.port !== undefined) {
+      if (!isValidPort(body.port)) {
+        res.status(400).json({ error: "invalid_payload", details: ["port must be an integer between 1 and 65535"] });
+        return;
+      }
+      port = body.port;
+    }
+
     const id = `host-${randomUUID().slice(0, 8)}`;
     const now = new Date().toISOString();
     const db = getDb();
@@ -38,7 +52,7 @@ export function createFleetRouter(opts?: FleetRouterOptions): Router {
       id,
       hostname,
       ip: typeof body.ip === "string" ? body.ip : null,
-      port: typeof body.port === "number" ? body.port : 22,
+      port,
       ssh_user: typeof body.ssh_user === "string" ? body.ssh_user : null,
       ssh_key_path: typeof body.ssh_key_path === "string" ? body.ssh_key_path : null,
       podman_socket: typeof body.podman_socket === "string" ? body.podman_socket : null,
@@ -65,12 +79,28 @@ export function createFleetRouter(opts?: FleetRouterOptions): Router {
         return;
       }
       hostname = host.hostname as string;
-      port = (host.port as number) || 22;
+      if (!isValidPort(host.port)) {
+        res.status(400).json({ error: "invalid_host_port", details: ["persisted host has invalid port"] });
+        return;
+      }
+      port = host.port;
       podmanSocket = (host.podman_socket as string) || null;
       hostId = body.host_id;
     } else if (typeof body.hostname === "string") {
-      hostname = body.hostname;
-      port = typeof body.port === "number" ? body.port : 22;
+      hostname = body.hostname.trim();
+      if (!hostname) {
+        res.status(400).json({ error: "invalid_payload", details: ["hostname cannot be empty"] });
+        return;
+      }
+      if (body.port !== undefined) {
+        if (!isValidPort(body.port)) {
+          res.status(400).json({ error: "invalid_payload", details: ["port must be an integer between 1 and 65535"] });
+          return;
+        }
+        port = body.port;
+      } else {
+        port = 22;
+      }
       podmanSocket = typeof body.podman_socket === "string" ? body.podman_socket : null;
     } else {
       res.status(400).json({ error: "invalid_payload", details: ["host_id or hostname required"] });

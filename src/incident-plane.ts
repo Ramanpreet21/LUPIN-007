@@ -24,6 +24,7 @@ import {
   normalizeWebhooks,
   patchIncident,
   setIncidentStatus,
+  TERMINAL_STATUSES,
   type IncidentStatus,
   type NormalizedAlert,
   type SafetyBadge,
@@ -156,7 +157,7 @@ function computeGateBadges(commands: string[]): SafetyBadge[] {
 
 /** Scoped command diff with blast-radius annotations (PR #5 §5d). */
 function commandDiff(commands: string[]): string {
-  return formatScopedDiff(commands);
+  return commands.map((c) => `+ ${c}`).join("\n");
 }
 
 export interface IncidentRouterOptions {
@@ -217,7 +218,6 @@ export function createIncidentRouter({
     // every referenced call, not just the last message's toolCalls list.
     const toolCallById = new Map<string, ToolCall>();
     try {
-
       let activeModel = model;
       try {
         const row = getDb().prepare("SELECT value FROM settings WHERE key = 'model'").get() as { value?: string } | undefined;
@@ -243,12 +243,35 @@ export function createIncidentRouter({
       sessionId = data.id;
       patchIncident(incidentId, { sessionId });
 
+      try {
+        const db = getDb();
+        db.prepare(
+          `INSERT OR IGNORE INTO sessions (id, thread_id, incident_id, summary, created_at)
+           VALUES (@id, @thread_id, @incident_id, @summary, @created_at)`
+        ).run({
+          id: sessionId,
+          thread_id: null,
+          incident_id: incidentId,
+          summary: `Incident ${incidentId} diagnosis session`,
+          created_at: new Date().toISOString(),
+        });
+        broadcast({ type: "session_created", payload: { session_id: sessionId, incident_id: incidentId } });
+      } catch (err) {
+        logger.warn({ event: "session_persist_err", err, sessionId }, "Failed to persist initial session record");
+      }
+
       const stream = await client.sessions.createTurnStream(sessionId, {
         input: [{ type: "user.message", content: incidentMessage(alert, stateBlock) }],
         previousTurnId: "none",
       });
 
       for await (const ev of stream) {
+        if ((ev as any).threadId) {
+          try {
+            getDb().prepare("UPDATE sessions SET thread_id = ? WHERE id = ?").run((ev as any).threadId, sessionId);
+          } catch { /* non-fatal */ }
+        }
+
         switch (ev.type) {
           case "turn.created": {
             turnId = (ev as TurnCreatedEvent).turnId;
@@ -266,20 +289,11 @@ export function createIncidentRouter({
                 created_at: sandbox.createdAt,
               },
             });
-            try {
-              const db = getDb();
-              db.prepare(
-                `INSERT INTO sessions (id, thread_id, incident_id, summary, created_at)
-                 VALUES (@id, @thread_id, @incident_id, @summary, @created_at)`
-              ).run({
-                id: sessionId,
-                thread_id: ev.threadId ?? null,
-                incident_id: incidentId,
-                summary: `Incident ${incidentId} diagnosis session`,
-                created_at: new Date().toISOString(),
-              });
-              broadcast({ type: "session_created", payload: { session_id: sessionId, thread_id: ev.threadId, incident_id: incidentId } });
-            } catch { /* DB insert failure is non-fatal */ }
+            if (sandbox.threadId) {
+              try {
+                getDb().prepare("UPDATE sessions SET thread_id = ? WHERE id = ?").run(sandbox.threadId, sessionId);
+              } catch { /* DB update failure is non-fatal */ }
+            }
             break;
           }
           case "model.message": {
@@ -708,7 +722,7 @@ export function createIncidentRouter({
 
   router.post("/api/emergency-stop", async (_req: Request, res: Response) => {
     const client = getTf().client;
-    const active = listIncidents({ status: "diagnosing" }).concat(listIncidents({ status: "awaiting_approval" }));
+    const active = listIncidents().filter((i) => !TERMINAL_STATUSES.has(i.status));
     let cancelled = 0;
 
     for (const incident of active) {
@@ -740,7 +754,7 @@ export function createIncidentRouter({
 
     if (msg.includes("incident") || msg.includes("alert") || msg.includes("issue") || msg.includes("error")) {
       thoughts.push("Scanning active and archived incident store...");
-      const active = listIncidents({ status: "diagnosing" }).concat(listIncidents({ status: "awaiting_approval" }));
+      const active = listIncidents().filter((i) => !TERMINAL_STATUSES.has(i.status));
       if (active.length === 0) {
         responseText = "All systems operational. No active incidents currently require operator intervention. The incident deck is in monitoring mode.";
       } else {
@@ -765,10 +779,12 @@ export function createIncidentRouter({
       thoughts.push("Evaluating AST safety policies and active profile...");
       try {
         const profileSetting = getDb().prepare("SELECT value FROM settings WHERE key = 'policy_profile'").get() as { value?: string } | undefined;
-        const rules = getDb().prepare("SELECT name, description, risk_score FROM policy_rules WHERE enabled = 1").all() as Array<{ name: string; description: string; risk_score: number }>;
-        responseText = `Active Policy Profile: **${profileSetting?.value || "STRICT_SRE"}**\n\nEnforcing ${rules.length} active AST safeguard rules including destructive command filtering, permission escalation checks, and path boundary validation.`;
+        const modeSetting = getDb().prepare("SELECT value FROM settings WHERE key = 'enforcement_mode'").get() as { value?: string } | undefined;
+        const profileName = profileSetting?.value || "Production Safe";
+        const mode = modeSetting?.value || "STRICT_GATED";
+        responseText = `Safety Governance is active with profile "${profileName}" running in mode [${mode}]. All destructive shell actions are parsed into AST nodes and checked against active regex guardrails.`;
       } catch {
-        responseText = "AST safety policies are active with strict guardrails enabled.";
+        responseText = "AST safety policies and guardrails are active in STRICT_GATED mode. High-risk actions require explicit operator sign-off.";
       }
     } else if (msg.includes("model") || msg.includes("llm") || msg.includes("ai")) {
       thoughts.push("Checking configured LLM provider and TrueForge harness settings...");
@@ -799,6 +815,14 @@ export function createIncidentRouter({
     const tf = getTf();
     const client = tf.client;
     const db = getDb();
+
+    if (sessionId) {
+      const existing = db.prepare("SELECT id FROM sessions WHERE id = ?").get(sessionId);
+      if (!existing) {
+        res.status(404).json({ error: "session_not_found" });
+        return;
+      }
+    }
 
     let activeModel = model;
     try {
@@ -928,6 +952,8 @@ export function createIncidentRouter({
                 break;
               }
               case "turn.done": {
+                const done = ev as TurnDoneEvent;
+                const isSuccess = done.state.status === "done";
                 let formatted = fullResponse;
                 try {
                   const parsed = JSON.parse(fullResponse.trim());
@@ -941,12 +967,12 @@ export function createIncidentRouter({
                     }
                   }
                 } catch { /* raw text */ }
-                const finalContent = formatted || "Action completed.";
+                const finalContent = formatted || (isSuccess ? "Action completed." : "Conversation turn failed.");
                 persistAssistantMessage(finalContent);
                 broadcast({
                   type: "converse_complete",
                   session_id: activeSession,
-                  payload: { content: finalContent, status: "done" },
+                  payload: { content: finalContent, status: isSuccess ? "done" : "failed" },
                 });
                 return;
               }

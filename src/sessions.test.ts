@@ -142,7 +142,7 @@ describe("sessions routes", () => {
     assert.equal(body.error, "session_not_found");
   });
 
-  it("incident diagnosis sandbox.created persists session row and broadcasts session_created", async () => {
+  it("incident diagnosis creates session row immediately on client.sessions.create and updates thread_id from stream", async () => {
     const t0 = new Date().toISOString();
     const sandboxStream: TurnStreamingEvent[] = [
       ev({ type: "turn.created", id: "s0", createdAt: t0, turnId: "turn-1", threadId: "thread-100", previousTurnId: null, state: "running" }),
@@ -195,10 +195,9 @@ describe("sessions routes", () => {
 
       const sessionCreatedBroadcast = broadcasts.find(
         (b: any) => b.type === "session_created"
-      ) as { type: string; payload: { session_id: string; thread_id: string; incident_id: string } } | undefined;
+      ) as { type: string; payload: { session_id: string; thread_id?: string; incident_id: string } } | undefined;
       assert.ok(sessionCreatedBroadcast, "session_created broadcast emitted");
       assert.equal(sessionCreatedBroadcast.payload.session_id, "sess-tf-1");
-      assert.equal(sessionCreatedBroadcast.payload.thread_id, "thread-100");
       assert.equal(sessionCreatedBroadcast.payload.incident_id, alertBody.incident_id);
 
       const sessionRes = await fetch(`${incidentBaseUrl}/api/sessions/sess-tf-1`);

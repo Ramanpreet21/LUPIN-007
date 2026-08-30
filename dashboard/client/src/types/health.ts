@@ -20,17 +20,10 @@ export interface HealthSummary {
     count: number;
     items: CriticalAlert[];
   };
-  trafficRate: {
-    rps: number;
-  };
-  errorRate: {
-    percentage: number;
-    failedRequestsPerMin: number;
-  };
-  errorBudget: {
-    remainingPercentage: number;
-    burnRate: BurnRateStatus;
-  };
+  uptime: number;
+  trueforge_ready: boolean;
+  incidents_active: number;
+  incidents_total: number;
 }
 
 /** Live control-plane health relayed by GET /health (PR #4 4d). */
