@@ -269,8 +269,17 @@ export default function Home() {
   const [draft, setDraft] = useState("");
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>(() => storedSetup?.defaultApprovalMode ?? defaultAgentStatus.safety.approvalMode);
   const [agentStopped, setAgentStopped] = useState(false);
-  const [models, setModels] = useState<Array<{ id: string; name: string }>>([]);
-  const [selectedModel, setSelectedModel] = useState<string>(() => defaultAgentStatus.telemetry.activeModel);
+
+  const DEFAULT_MODELS = [
+    { id: "google-gemini/gemini-3-6-flash", name: "Gemini 3.6 Flash" },
+    { id: "google-gemini/gemini-3-1-pro-preview", name: "Gemini 3.1 Pro Preview" },
+    { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5" },
+    { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4" },
+    { id: "local", name: "Local Model" },
+  ];
+
+  const [models, setModels] = useState<Array<{ id: string; name: string }>>(DEFAULT_MODELS);
+  const [selectedModel, setSelectedModel] = useState<string>(() => storedSetup?.modelKeys.localLlmEndpoint ?? "google-gemini/gemini-3-6-flash");
   const [sshStatus, setSshStatus] = useState<SSHStatus>(() => storedSetup?.launchMode === "LIVE_HOST" ? "DISCONNECTED" : defaultAgentStatus.session.sshStatus);
   const [activeTarget, setActiveTarget] = useState(() => ({ host: storedSetup?.ssh.targetHost ?? defaultAgentStatus.session.hostname, port: storedSetup?.ssh.sshPort ?? 22 }));
   const [activeAgentSkillId, setActiveAgentSkillId] = useState<string | null>(defaultAgentStatus.activeSkillId ?? null);
@@ -1089,7 +1098,50 @@ export default function Home() {
               {([ ["general", "General"], ["sandbox", "Sandbox twin"], ["keys", "API keys"], ["mcp", "MCP connections"], ["skills", "Skills"] ] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={settingsSection === id} className={settingsSection === id ? "is-active" : ""} onClick={() => { setSettingsSection(id); setSettingsNotice(""); if (id === "sandbox") void loadSandboxSettings(); }}>{label}</button>)}
             </div>
             <section className="management-dialog-body">
-              {settingsSection === "general" && <div className="settings-section-stack"><div className="settings-summary-card"><ShieldCheck size={18} /><div><strong>{launchMode === "LIVE_HOST" ? "Live-host control plane" : "Local demo control plane"}</strong><span>{storedSetup ? `Configured for ${operatorLabel} · ${activeTarget.host}` : "Policy guards are active for remote mutations and outbound network actions."}</span></div><b>{launchMode === "LIVE_HOST" ? "READY" : "DEMO"}</b></div><div className="settings-metric-grid"><div><span>Orchestrator</span><strong>{defaultAgentStatus.engine.orchestratorRuntime}</strong></div><div><span>Container runtime</span><strong>{defaultAgentStatus.engine.containerRuntime}</strong></div><div><span>Approval mode</span><strong>{approvalMode === "AUTONOMOUS" ? "Autonomous" : "Gated"}</strong></div></div><div className="settings-inline-actions"><button type="button" onClick={() => setSettingsNotice("Diagnostic preferences saved for this session.")}>Save preferences</button><button type="button" onClick={() => setSettingsNotice("Policy review is ready in the control-plane audit queue.")}>Review policy</button><button type="button" onClick={restartFirstRunSetup}>Restart setup</button></div></div>}
+              {settingsSection === "general" && (
+                <div className="settings-section-stack">
+                  <div className="settings-summary-card">
+                    <ShieldCheck size={18} />
+                    <div>
+                      <strong>{launchMode === "LIVE_HOST" ? "Live-host control plane" : "Local demo control plane"}</strong>
+                      <span>{storedSetup ? `Configured for ${operatorLabel} · ${activeTarget.host}` : "Policy guards are active for remote mutations and outbound network actions."}</span>
+                    </div>
+                    <b>{launchMode === "LIVE_HOST" ? "READY" : "DEMO"}</b>
+                  </div>
+                  <div className="settings-metric-grid">
+                    <div><span>Orchestrator</span><strong>{defaultAgentStatus.engine.orchestratorRuntime}</strong></div>
+                    <div><span>Container runtime</span><strong>{defaultAgentStatus.engine.containerRuntime}</strong></div>
+                    <div><span>Approval mode</span><strong>{approvalMode === "AUTONOMOUS" ? "Autonomous" : "Gated"}</strong></div>
+                  </div>
+
+                  <div className="p-3.5 rounded-lg bg-white/5 border border-white/10 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-white/70">LLM Reasoning Model</span>
+                      <span className="text-[10px] text-emerald-400 font-mono">TrueForge Agent Engine</span>
+                    </div>
+                    <select
+                      value={selectedModel}
+                      onChange={(e) => handleModelChange(e.target.value)}
+                      className="w-full bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    >
+                      {models.map((m) => (
+                        <option key={m.id} value={m.id} className="bg-neutral-900 text-white">
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-white/40">
+                      Incident diagnosis sessions and autonomous sandbox runs will use this model.
+                    </p>
+                  </div>
+
+                  <div className="settings-inline-actions">
+                    <button type="button" onClick={() => setSettingsNotice("Diagnostic preferences saved for this session.")}>Save preferences</button>
+                    <button type="button" onClick={() => setSettingsNotice("Policy review is ready in the control-plane audit queue.")}>Review policy</button>
+                    <button type="button" onClick={restartFirstRunSetup}>Restart setup</button>
+                  </div>
+                </div>
+              )}
               {settingsSection === "sandbox" && <div className="settings-section-stack">
                 <div className="settings-section-heading"><div><h3>Multi-Runtime Sandbox Isolation</h3><p>Configure local container execution (Podman/Docker) or cloud/dedicated Daytona microVMs.</p></div><Box size={18} /></div>
                 <div className="settings-field-group">
