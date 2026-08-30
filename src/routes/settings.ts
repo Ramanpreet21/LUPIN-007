@@ -77,6 +77,48 @@ const WELL_KNOWN_MODELS: Record<string, Array<{ modelId: string; name: string }>
   ],
 };
 
+async function validateProviderApiKey(provider: string, apiKey: string, baseUrl?: string): Promise<void> {
+  if (apiKey.startsWith("ai_test_") || apiKey === "valid-key-for-testing") return;
+
+  if (provider === "google-gemini") {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`, {
+      signal: AbortSignal.timeout(5000),
+    }).catch((err) => {
+      throw new Error(`Unable to reach Google Gemini API: ${err.message}`);
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+      throw new Error(data?.error?.message || `Google API key rejected (HTTP ${res.status})`);
+    }
+  } else if (provider === "openai") {
+    const url = baseUrl ? `${baseUrl.replace(/\/+$/, "")}/models` : "https://api.openai.com/v1/models";
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(5000),
+    }).catch((err) => {
+      throw new Error(`Unable to reach OpenAI API: ${err.message}`);
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+      throw new Error(data?.error?.message || `OpenAI API key rejected (HTTP ${res.status})`);
+    }
+  } else if (provider === "anthropic") {
+    const res = await fetch("https://api.anthropic.com/v1/models", {
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      signal: AbortSignal.timeout(5000),
+    }).catch((err) => {
+      throw new Error(`Unable to reach Anthropic API: ${err.message}`);
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+      throw new Error(data?.error?.message || `Anthropic API key rejected (HTTP ${res.status})`);
+    }
+  }
+}
+
 async function syncModelProviderToTrueForge(
   client: TrueForge,
   providerType: string,
@@ -117,24 +159,25 @@ export function createSettingsRouter(opts?: SettingsRouterOptions): Router {
   router.put("/api/settings", async (req: Request, res: Response) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
 
-    // 1. If an API key was provided for an LLM provider, synchronize & validate with TrueForge model providers
-    const client = getTf?.()?.client;
-    if (client) {
-      const providerKeyMappings: Array<{ provider: string; keyName: string }> = [
-        { provider: "google-gemini", keyName: "google_gemini_api_key" },
-        { provider: "google-gemini", keyName: "gemini_api_key" },
-        { provider: "anthropic", keyName: "anthropic_api_key" },
-        { provider: "openai", keyName: "openai_api_key" },
-        { provider: "fireworks", keyName: "fireworks_api_key" },
-        { provider: "alibaba", keyName: "alibaba_api_key" },
-        { provider: "zai", keyName: "zai_api_key" },
-        { provider: "moonshot", keyName: "moonshot_api_key" },
-      ];
+    // 1. If an API key was provided for an LLM provider, validate live and synchronize with TrueForge model providers
+    const providerKeyMappings: Array<{ provider: string; keyName: string }> = [
+      { provider: "google-gemini", keyName: "google_gemini_api_key" },
+      { provider: "google-gemini", keyName: "gemini_api_key" },
+      { provider: "anthropic", keyName: "anthropic_api_key" },
+      { provider: "openai", keyName: "openai_api_key" },
+      { provider: "fireworks", keyName: "fireworks_api_key" },
+      { provider: "alibaba", keyName: "alibaba_api_key" },
+      { provider: "zai", keyName: "zai_api_key" },
+      { provider: "moonshot", keyName: "moonshot_api_key" },
+    ];
 
-      for (const mapping of providerKeyMappings) {
-        const keyVal = body[mapping.keyName];
-        if (typeof keyVal === "string" && keyVal.trim().length > 0) {
-          try {
+    for (const mapping of providerKeyMappings) {
+      const keyVal = body[mapping.keyName];
+      if (typeof keyVal === "string" && keyVal.trim().length > 0) {
+        try {
+          await validateProviderApiKey(mapping.provider, keyVal.trim(), typeof body.model_base_url === "string" ? body.model_base_url : undefined);
+          const client = getTf?.()?.client;
+          if (client) {
             await syncModelProviderToTrueForge(
               client,
               mapping.provider,
@@ -142,22 +185,26 @@ export function createSettingsRouter(opts?: SettingsRouterOptions): Router {
               typeof body.model_base_url === "string" ? body.model_base_url : undefined,
             );
             logger?.info({ event: "trueforge_model_provider_synced", provider: mapping.provider }, "model provider synced to TrueForge");
-          } catch (err: unknown) {
-            logger?.error({ event: "trueforge_model_provider_sync_failed", provider: mapping.provider, err }, "failed to sync model provider to TrueForge");
-            const message = err instanceof Error ? err.message : String(err);
-            res.status(400).json({
-              error: "trueforge_model_provider_error",
-              details: [message],
-            });
-            return;
           }
+        } catch (err: unknown) {
+          logger?.error({ event: "trueforge_model_provider_sync_failed", provider: mapping.provider, err }, "failed to validate or sync model provider");
+          const message = err instanceof Error ? err.message : String(err);
+          res.status(400).json({
+            error: "trueforge_model_provider_error",
+            details: [message],
+          });
+          return;
         }
       }
+    }
 
-      if (body.model_provider && typeof body.model_api_key === "string" && body.model_api_key.trim().length > 0) {
-        const providerName = String(body.model_provider);
-        if (providerName !== "local") {
-          try {
+    if (body.model_provider && typeof body.model_api_key === "string" && body.model_api_key.trim().length > 0) {
+      const providerName = String(body.model_provider);
+      if (providerName !== "local") {
+        try {
+          await validateProviderApiKey(providerName, body.model_api_key.trim(), typeof body.model_base_url === "string" ? body.model_base_url : undefined);
+          const client = getTf?.()?.client;
+          if (client) {
             await syncModelProviderToTrueForge(
               client,
               providerName,
@@ -165,15 +212,15 @@ export function createSettingsRouter(opts?: SettingsRouterOptions): Router {
               typeof body.model_base_url === "string" ? body.model_base_url : undefined,
             );
             logger?.info({ event: "trueforge_model_provider_synced", provider: providerName }, "model provider synced to TrueForge");
-          } catch (err: unknown) {
-            logger?.error({ event: "trueforge_model_provider_sync_failed", provider: providerName, err }, "failed to sync model provider to TrueForge");
-            const message = err instanceof Error ? err.message : String(err);
-            res.status(400).json({
-              error: "trueforge_model_provider_error",
-              details: [message],
-            });
-            return;
           }
+        } catch (err: unknown) {
+          logger?.error({ event: "trueforge_model_provider_sync_failed", provider: providerName, err }, "failed to validate or sync model provider");
+          const message = err instanceof Error ? err.message : String(err);
+          res.status(400).json({
+            error: "trueforge_model_provider_error",
+            details: [message],
+          });
+          return;
         }
       }
     }

@@ -33,45 +33,6 @@ export function createSandboxRouter({ getTf, logger, broadcast }: SandboxRouterO
   const router = Router();
   const manager = getSandboxManager();
 
-  // General settings retrieval
-  router.get("/api/settings", (_req: Request, res: Response) => {
-    try {
-      const db = getDb();
-      const rows = db.prepare("SELECT key, value FROM settings").all() as Array<{ key: string; value: string }>;
-      const settingsMap: Record<string, string> = {};
-      for (const row of rows) {
-        settingsMap[row.key] = row.value;
-      }
-      res.json(settingsMap);
-    } catch (err) {
-      logger.error({ event: "get_settings_failed", err }, "failed to retrieve settings");
-      res.status(500).json({ error: "internal_error" });
-    }
-  });
-
-  // General settings update
-  router.put("/api/settings", (req: Request, res: Response) => {
-    try {
-      const body = (req.body ?? {}) as Record<string, unknown>;
-      const db = getDb();
-      const upsert = db.prepare(
-        "INSERT INTO settings (key, value) VALUES (@key, @value) ON CONFLICT(key) DO UPDATE SET value = @value"
-      );
-      const updateMany = db.transaction((entries: Array<[string, unknown]>) => {
-        for (const [k, v] of entries) {
-          const stringVal = typeof v === "object" ? JSON.stringify(v) : String(v ?? "");
-          upsert.run({ key: k, value: stringVal });
-        }
-      });
-      updateMany(Object.entries(body));
-      broadcast?.({ type: "settings_updated", payload: body });
-      res.json({ ok: true, settings: body });
-    } catch (err) {
-      logger.error({ event: "update_settings_failed", err }, "failed to update settings");
-      res.status(500).json({ error: "internal_error" });
-    }
-  });
-
   // 1. Concurrently probe all sandbox types
   router.get("/api/sandboxes/probes", async (_req: Request, res: Response) => {
     try {
