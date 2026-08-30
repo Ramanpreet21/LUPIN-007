@@ -7,7 +7,6 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import type { LiveTerminalProps } from "@/types/terminal";
-import { nextTerminalDelta } from "@/hooks/useControlPlaneTerminalStream";
 
 const labels = { CONNECTING: "connecting", CONNECTED: "live", DISCONNECTED: "offline", ERROR: "error" } as const;
 
@@ -17,7 +16,6 @@ export function LiveTerminal({ stream, options, className = "" }: LiveTerminalPr
   const pendingOutputRef = useRef<string[]>([]);
   const outputFrameRef = useRef<number | null>(null);
   const lastReportedDimensionsRef = useRef("");
-  const acceptedRef = useRef(0);
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -34,16 +32,10 @@ export function LiveTerminal({ stream, options, className = "" }: LiveTerminalPr
     terminal.loadAddon(fit);
     terminal.open(container);
     terminalRef.current = terminal;
-    lastReportedDimensionsRef.current = "";
-    // A recreated xterm starts blank: reset delivery state so the current
-    // bounded transcript is replayed into it, and drop any stale pending
-    // frame/queue from the disposed terminal instead of writing it twice.
-    if (outputFrameRef.current !== null) {
-      window.cancelAnimationFrame(outputFrameRef.current);
-      outputFrameRef.current = null;
+    if (stream.transcript) {
+      terminal.write(stream.transcript);
     }
-    pendingOutputRef.current = [];
-    acceptedRef.current = 0;
+    lastReportedDimensionsRef.current = "";
     const resize = () => {
       try {
         fit.fit();
@@ -63,20 +55,8 @@ export function LiveTerminal({ stream, options, className = "" }: LiveTerminalPr
     return () => { window.cancelAnimationFrame(frame); input.dispose(); observer.disconnect(); terminal.dispose(); terminalRef.current = null; };
   }, [options?.fontFamily, options?.fontSize, options?.theme, stream.sendData, stream.sendResize]);
   useEffect(() => {
-    // Derive the incremental write from the bounded window and the monotonic
-    // cursor, then enqueue it. `acceptedRef` advances only here, paired with
-    // the enqueue, so nothing is ever marked delivered before the terminal
-    // actually accepts it: rotation is invisible to delta computation, and a
-    // fresh mount (accepted = 0) replays output that arrived while no terminal
-    // was mounted.
-    const delta = nextTerminalDelta(
-      stream.transcript,
-      stream.terminalCursor,
-      acceptedRef.current,
-    );
-    if (!delta.incomingData) return;
-    acceptedRef.current = delta.delivered;
-    pendingOutputRef.current.push(delta.incomingData);
+    if (!stream.incomingData) return;
+    pendingOutputRef.current.push(stream.incomingData);
     if (outputFrameRef.current !== null) return;
 
     outputFrameRef.current = window.requestAnimationFrame(() => {
@@ -85,7 +65,7 @@ export function LiveTerminal({ stream, options, className = "" }: LiveTerminalPr
       pendingOutputRef.current = [];
       terminalRef.current?.write(output);
     });
-  }, [stream.transcript, stream.terminalCursor, options?.fontFamily, options?.fontSize, options?.theme, stream.sendData, stream.sendResize]);
+  }, [stream.incomingData]);
 
   useEffect(() => () => {
     if (outputFrameRef.current !== null) window.cancelAnimationFrame(outputFrameRef.current);

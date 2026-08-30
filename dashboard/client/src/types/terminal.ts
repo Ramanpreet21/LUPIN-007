@@ -9,10 +9,9 @@ export interface TerminalDimensions {
 }
 
 export interface UseTerminalStreamReturn {
-  /** Latest bounded transcript window (the transport may rotate the prefix at a cap). */
-  transcript: string;
-  /** Monotonic count of transcript characters appended so far; never decreases. */
-  terminalCursor: number;
+  incomingData: string | null;
+  transcript?: string;
+  terminalCursor?: number;
   connectionStatus: "CONNECTING" | "CONNECTED" | "DISCONNECTED" | "ERROR";
   sendData: (data: string) => void;
   sendResize: (dimensions: TerminalDimensions) => void;

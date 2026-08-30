@@ -1,8 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { mockAstSimulation } from "@/data/mockGovernanceData";
 import type { AstSimulation, PolicyRule, SafetyEnforcementMode } from "@/types/operations";
 
 const API = import.meta.env.VITE_CONTROL_PLANE_ORIGIN ?? "http://localhost:3000";
+
+const defaultAstSimulation: AstSimulation = {
+  command: "find /var/log -type f -delete",
+  riskScore: 82,
+  trippedNode: "Action: -delete",
+  nodes: [
+    { id: "root", label: "Command", kind: "find", risk: "low" },
+    { id: "path", label: "Path", kind: "/var/log", risk: "medium" },
+    { id: "type", label: "Predicate", kind: "-type f", risk: "low" },
+    { id: "delete", label: "Action", kind: "-delete", risk: "high" },
+  ],
+};
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API}${path}`, {
@@ -21,7 +32,7 @@ export function usePolicyEngine() {
   const [expandedRuleId, setExpandedRuleId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [notice, setNotice] = useState("");
-  const [astSimulation, setAstSimulation] = useState<AstSimulation>(mockAstSimulation);
+  const [astSimulation, setAstSimulation] = useState<AstSimulation>(defaultAstSimulation);
   const [statsData, setStatsData] = useState({
     activeRules: 0,
     blacklistedBinaries: 0,

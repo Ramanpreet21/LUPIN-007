@@ -24,7 +24,7 @@ export function useHealth(pollMs = 10_000): UseHealthReturn {
     let cancelled = false;
     const load = async () => {
       try {
-        const response = await fetch(`${CONTROL_PLANE_ORIGIN}/health`);
+        const response = await fetch(`${CONTROL_PLANE_ORIGIN}/api/health-summary`);
         if (!response.ok) throw new Error(`health check failed (HTTP ${response.status})`);
         const body = (await response.json()) as ControlPlaneHealth;
         if (cancelled) return;
