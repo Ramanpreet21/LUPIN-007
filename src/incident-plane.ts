@@ -302,8 +302,50 @@ export function createIncidentRouter({
             const gated = gate.toolCalls.map((r) => toolCallById.get(r.id) ?? r);
             const commands = gated.map((t) => toolCommandString(t) || t.id || "unknown");
             const badges = computeGateBadges(commands);
-
             const scope = commands.flatMap(commandScope);
+
+            // Check enforcement mode
+            let enforcementMode = "STRICT_GATED";
+            try {
+              const db = getDb();
+              const row = db.prepare("SELECT value FROM settings WHERE key = 'enforcement_mode'").get() as { value: string } | undefined;
+              if (row) enforcementMode = row.value;
+            } catch { /* fallback to STRICT_GATED */ }
+
+            if (enforcementMode === "AUTONOMOUS") {
+              // Auto-approve: resume turn immediately
+              patchIncident(incidentId, {
+                turnId,
+                threadId: gate.threadId,
+                toolCallId: gated[0]?.id,
+                toolCallIds: gated.map((t) => t.id),
+                proposedCommand: commands.join("\n"),
+                proposedCommands: commands,
+                safetyBadges: badges,
+              });
+              setIncidentStatus(incidentId, "approved");
+              void resumeApproval(incidentId, "approved");
+              return;
+            }
+
+            if (enforcementMode === "DRY_RUN") {
+              // Log only, auto-deny
+              patchIncident(incidentId, {
+                turnId,
+                threadId: gate.threadId,
+                toolCallId: gated[0]?.id,
+                toolCallIds: gated.map((t) => t.id),
+                proposedCommand: commands.join("\n"),
+                proposedCommands: commands,
+                safetyBadges: badges,
+              });
+              setIncidentStatus(incidentId, "rejected");
+              logger.info({ event: "dry_run_deny", incidentId, commands }, "DRY_RUN mode: auto-denied");
+              void resumeApproval(incidentId, "rejected");
+              return;
+            }
+
+            // STRICT_GATED (default): existing behavior — wait for human
             patchIncident(incidentId, {
               turnId,
               threadId: gate.threadId,
