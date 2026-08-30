@@ -103,7 +103,7 @@ async function main(): Promise<void> {
         app.use(createDemoRouter({ logger, broadcast, port: config.port }));
         app.use(createPolicyRouter({ logger }));
         app.use(createFleetRouter({ logger, broadcast }));
-        app.use(createModelsRouter({ logger }));
+        app.use(createModelsRouter({ getTf: () => tf, logger }));
         app.use(createSettingsRouter({ logger, broadcast }));
         app.use(createSessionsRouter({ getTf: () => tf, logger, broadcast, model: config.trueforgeModel }));
         app.use(createModelRouter({ logger, getTf: () => tf, model: config.trueforgeModel, apiToken: config.controlPlaneApiToken }));
