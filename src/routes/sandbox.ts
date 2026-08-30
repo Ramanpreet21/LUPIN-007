@@ -44,7 +44,6 @@ function requireApiToken(token: string | undefined) {
  * Multi-Runtime Sandbox API Routes:
  * - GET /api/sandboxes/probes (auto-discovers all available sandbox runtimes)
  * - POST /api/sandboxes/probe/:type (tests specific runner with custom config)
- * - POST /api/sandboxes/exec (runs a test command in the active sandbox runtime)
  * - GET /api/settings/sandbox (retrieves current sandbox settings)
  * - PUT /api/settings/sandbox (persists and activates sandbox provider)
  */
@@ -168,20 +167,7 @@ export function createSandboxRouter({ getTf, logger, broadcast, apiToken }: Sand
     }
   });
 
-  // 3. Test execution in active sandbox runtime
-  router.post("/api/sandboxes/exec", async (req: Request, res: Response) => {
-    const body = (req.body ?? {}) as { command?: string; timeoutMs?: number };
-    const command = body.command || "echo 'sandbox execution ok'";
-    try {
-      const result = await manager.execInActive(command, { timeoutMs: body.timeoutMs });
-      res.json(result);
-    } catch (err) {
-      logger.error({ event: "sandbox_exec_failed", err }, "sandbox exec failed");
-      res.status(500).json({ error: "sandbox_exec_failed", details: [String(err)] });
-    }
-  });
-
-  // 4. Retrieve current sandbox settings
+  // 3. Retrieve current sandbox settings
   router.get("/api/settings/sandbox", async (_req: Request, res: Response) => {
     try {
       const client = getTf().client;
