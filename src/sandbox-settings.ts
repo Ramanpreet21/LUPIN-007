@@ -134,9 +134,17 @@ export async function getSandboxSettings(
 export async function updateSandboxSettings(
   client: SandboxProviderClient,
   apiKey: string,
+  serverUrl?: string,
 ): Promise<SandboxSettings> {
+  const manifest: Record<string, unknown> = {
+    ...DAYTONA_PRESETS,
+    auth: { apiKey },
+  };
+  if (serverUrl) {
+    manifest.serverUrl = serverUrl;
+  }
   await client.createOrUpdate({
-    manifest: { ...DAYTONA_PRESETS, auth: { apiKey } },
+    manifest: manifest as unknown as TrueForgeApi.SandboxProviderManifest,
   });
   return getSandboxSettings(client);
 }

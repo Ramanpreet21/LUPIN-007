@@ -61,7 +61,7 @@ import {
   X,
 } from "lucide-react";
 
-type SettingsSection = "general" | "keys" | "mcp" | "skills";
+type SettingsSection = "general" | "sandbox" | "keys" | "mcp" | "skills";
 type ConversationMessage = { id: string; role: "assistant" | "user" | "system"; label: string; time: string; content: string };
 type BackendPopup = { id: string; source: string; title: string; detail: string; priority: "attention" | "routine" };
 
@@ -153,6 +153,11 @@ export default function Home() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const [settingsNotice, setSettingsNotice] = useState("");
+  const [sandboxProvider, setSandboxProvider] = useState<string>("isolated-local");
+  const [sandboxUrl, setSandboxUrl] = useState<string>("");
+  const [sandboxKey, setSandboxKey] = useState<string>("");
+  const [sandboxProbes, setSandboxProbes] = useState<Array<{ type: string; available: boolean; latencyMs?: number; details?: string; socketPath?: string; serverUrl?: string }>>([]);
+  const [sandboxSaving, setSandboxSaving] = useState(false);
   const [mcpConnections, setMcpConnections] = useState([
     { id: "mcp-relay", name: "Relay Control", endpoint: "wss://relay-04.lan/mcp", status: "CONNECTED" },
     { id: "mcp-archive", name: "Archive Index", endpoint: "https://archive.lan/mcp", status: "PAUSED" },
@@ -313,6 +318,45 @@ export default function Home() {
     }
   };
 
+  const loadSandboxSettings = async () => {
+    try {
+      const [probesRes, settingsRes] = await Promise.all([
+        fetch(`${CONTROL_PLANE_ORIGIN}/api/sandboxes/probes`),
+        fetch(`${CONTROL_PLANE_ORIGIN}/api/settings/sandbox`),
+      ]);
+      const probesData = await probesRes.json();
+      const settingsData = await settingsRes.json();
+      if (Array.isArray(probesData.probes)) setSandboxProbes(probesData.probes);
+      if (settingsData.provider) setSandboxProvider(settingsData.provider);
+      if (settingsData.serverUrl) setSandboxUrl(settingsData.serverUrl);
+    } catch {}
+  };
+
+  const saveSandboxSettings = async () => {
+    setSandboxSaving(true);
+    try {
+      const res = await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings/sandbox`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: sandboxProvider,
+          serverUrl: sandboxUrl.trim(),
+          apiKey: sandboxKey.trim(),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.details?.[0] || err.error || "Failed to configure sandbox");
+      }
+      setSettingsNotice(`Sandbox calibrated: ${sandboxProvider} runtime active.`);
+      void loadSandboxSettings();
+    } catch (err) {
+      setSettingsNotice(err instanceof Error ? err.message : "Failed to save sandbox configuration.");
+    } finally {
+      setSandboxSaving(false);
+    }
+  };
+
   const handleWorkspaceAction = (actionType: string, payload?: Record<string, unknown>) => {
     const detail = Object.entries(payload ?? {}).map(([key, value]) => `${key}: ${String(value)}`).join(" · ");
     setConversationMessages((current) => [...current, { id: `workspace-${Date.now()}`, role: "system", label: "WORKSPACE", time: "NOW", content: `${actionType.replaceAll("_", " ")} staged locally${detail ? ` · ${detail}` : ""}. No external execution has been requested.` }]);
@@ -444,10 +488,79 @@ export default function Home() {
               <DialogClose className="management-dialog-close" aria-label="Close settings"><X size={17} /></DialogClose>
             </header>
             <div className="management-tabbar" role="tablist" aria-label="Settings sections">
-              {([ ["general", "General"], ["keys", "API keys"], ["mcp", "MCP connections"], ["skills", "Skills"] ] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={settingsSection === id} className={settingsSection === id ? "is-active" : ""} onClick={() => { setSettingsSection(id); setSettingsNotice(""); }}>{label}</button>)}
+              {([ ["general", "General"], ["sandbox", "Sandbox twin"], ["keys", "API keys"], ["mcp", "MCP connections"], ["skills", "Skills"] ] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={settingsSection === id} className={settingsSection === id ? "is-active" : ""} onClick={() => { setSettingsSection(id); setSettingsNotice(""); if (id === "sandbox") void loadSandboxSettings(); }}>{label}</button>)}
             </div>
             <section className="management-dialog-body">
               {settingsSection === "general" && <div className="settings-section-stack"><div className="settings-summary-card"><ShieldCheck size={18} /><div><strong>{launchMode === "LIVE_HOST" ? "Live-host control plane" : "Local demo control plane"}</strong><span>{storedSetup ? `Configured for ${operatorLabel} · ${activeTarget.host}` : "Policy guards are active for remote mutations and outbound network actions."}</span></div><b>{launchMode === "LIVE_HOST" ? "READY" : "DEMO"}</b></div><div className="settings-metric-grid"><div><span>Orchestrator</span><strong>{mockAgentStatus.engine.orchestratorRuntime}</strong></div><div><span>Container runtime</span><strong>{mockAgentStatus.engine.containerRuntime}</strong></div><div><span>Approval mode</span><strong>{approvalMode === "AUTONOMOUS" ? "Autonomous" : "Gated"}</strong></div></div><div className="settings-inline-actions"><button type="button" onClick={() => setSettingsNotice("Diagnostic preferences saved for this session.")}>Save preferences</button><button type="button" onClick={() => setSettingsNotice("Policy review is ready in the control-plane audit queue.")}>Review policy</button><button type="button" onClick={restartFirstRunSetup}>Restart setup</button></div></div>}
+              {settingsSection === "sandbox" && <div className="settings-section-stack">
+                <div className="settings-section-heading"><div><h3>Multi-Runtime Sandbox Isolation</h3><p>Configure local container execution (Podman/Docker) or cloud/dedicated Daytona microVMs.</p></div><Box size={18} /></div>
+                <div className="settings-field-group">
+                  <label className="text-xs text-neutral-400 block mb-1">Active Sandbox Runtime</label>
+                  <select
+                    value={sandboxProvider}
+                    onChange={(e) => setSandboxProvider(e.target.value)}
+                    className="w-full bg-neutral-900 border border-white/10 rounded px-2.5 py-1.5 text-xs text-white"
+                  >
+                    <option value="isolated-local">Simulated Host Process (Local /tmp scratch · Ready)</option>
+                    <option value="podman">
+                      Local Podman Container {sandboxProbes.find((p) => p.type === "podman")?.available ? "· [Detected]" : "· [Not detected]"}
+                    </option>
+                    <option value="docker">
+                      Local Docker Container {sandboxProbes.find((p) => p.type === "docker")?.available ? "· [Detected]" : "· [Not detected]"}
+                    </option>
+                    <option value="daytona-custom">Daytona Dedicated / Self-Hosted (Private URL)</option>
+                    <option value="daytona">Daytona Cloud (TrueForge Native)</option>
+                  </select>
+                </div>
+
+                {(sandboxProvider === "podman" || sandboxProvider === "docker") && (
+                  <div className="settings-field-group">
+                    <label className="text-xs text-neutral-400 block mb-1">UNIX Socket Path Override</label>
+                    <input
+                      type="text"
+                      value={sandboxUrl}
+                      onChange={(e) => setSandboxUrl(e.target.value)}
+                      placeholder={sandboxProvider === "podman" ? "/run/user/1000/podman/podman.sock" : "/var/run/docker.sock"}
+                      className="w-full bg-neutral-900 border border-white/10 rounded px-2.5 py-1.5 text-xs text-white"
+                    />
+                  </div>
+                )}
+
+                {sandboxProvider === "daytona-custom" && (
+                  <div className="settings-field-group">
+                    <label className="text-xs text-neutral-400 block mb-1">Dedicated Daytona Server URL</label>
+                    <input
+                      type="text"
+                      value={sandboxUrl}
+                      onChange={(e) => setSandboxUrl(e.target.value)}
+                      placeholder="https://daytona.internal.mycompany.com"
+                      className="w-full bg-neutral-900 border border-white/10 rounded px-2.5 py-1.5 text-xs text-white"
+                    />
+                  </div>
+                )}
+
+                {(sandboxProvider === "daytona" || sandboxProvider === "daytona-custom") && (
+                  <div className="settings-field-group">
+                    <label className="text-xs text-neutral-400 block mb-1">Daytona API Key</label>
+                    <input
+                      type="password"
+                      value={sandboxKey}
+                      onChange={(e) => setSandboxKey(e.target.value)}
+                      placeholder="daytona_…"
+                      className="w-full bg-neutral-900 border border-white/10 rounded px-2.5 py-1.5 text-xs text-white"
+                    />
+                  </div>
+                )}
+
+                <div className="settings-inline-actions">
+                  <button type="button" onClick={() => void saveSandboxSettings()} disabled={sandboxSaving}>
+                    {sandboxSaving ? "Calibrating…" : "Save & Calibrate Sandbox"}
+                  </button>
+                  <button type="button" onClick={() => void loadSandboxSettings()}>
+                    Refresh Probes
+                  </button>
+                </div>
+              </div>}
               {settingsSection === "keys" && <div className="settings-section-stack"><div className="settings-section-heading"><div><h3>API key management</h3><p>Keys are masked in this frontend prototype and are never rendered in full by default.</p></div><KeyRound size={18} /></div><div className="api-key-row"><div><span>Control-plane relay key</span><strong>{apiKeyVisible ? "lupin_live_81d4_7c6e_••••" : "lupin_••••••••••••••••"}</strong><small>Last rotated 12 days ago · scoped to relay operations</small></div><div className="row-action-group"><button type="button" onClick={() => setApiKeyVisible((value) => !value)} aria-label={apiKeyVisible ? "Mask API key" : "Reveal API key"}>{apiKeyVisible ? <EyeOff size={15} /> : <Eye size={15} />}</button><button type="button" onClick={() => setSettingsNotice("Key identifier copied to the local clipboard queue.")} aria-label="Copy key identifier"><Copy size={15} /></button><button type="button" onClick={() => setSettingsNotice("A replacement relay key has been queued for approval.")}>Rotate</button></div></div><button className="management-add-button" type="button" onClick={() => setSettingsNotice("New API key draft created with least-privilege defaults.")}><KeyRound size={15} />Create scoped key</button></div>}
               {settingsSection === "mcp" && <div className="settings-section-stack"><div className="settings-section-heading"><div><h3>MCP connections</h3><p>Manage connected Model Context Protocol services and their current availability.</p></div><Cable size={18} /></div><div className="connection-list">{mcpConnections.map((connection) => <div className="connection-row" key={connection.id}><div><strong>{connection.name}</strong><span>{connection.endpoint}</span></div><em className={connection.status === "CONNECTED" ? "is-connected" : ""}>{connection.status}</em><button type="button" onClick={() => toggleMcpConnection(connection.id)}>{connection.status === "CONNECTED" ? "Pause" : "Connect"}</button></div>)}</div><button className="management-add-button" type="button" onClick={() => setSettingsNotice("MCP connection draft added; provide its endpoint to continue.")}><Cable size={15} />Add MCP connection</button></div>}
               {settingsSection === "skills" && <div className="settings-section-stack"><div className="settings-section-heading"><div><h3>Skills and execution policies</h3><p>Select the active capability and review its policy scope before execution.</p></div><Sparkles size={18} /></div><div className="skill-management-list">{mockAgentStatus.skills.map((skill) => <div className="skill-management-row" key={skill.id}><div><strong>{skill.displayName}</strong><span>{skill.category.replaceAll("_", " ")} · {skill.executionPolicy === "AUTONOMOUS" ? "Autonomous" : "Policy gated"}</span></div><em>{skill.status}</em><button type="button" className={activeAgentSkillId === skill.id ? "is-selected" : ""} onClick={() => setActiveAgentSkillId(skill.id)}>{activeAgentSkillId === skill.id ? "Active" : "Set active"}</button></div>)}</div></div>}

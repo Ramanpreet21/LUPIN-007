@@ -166,11 +166,29 @@ export function FirstRunSetup({
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const [sandboxExpanded, setSandboxExpanded] = useState(false);
   const [sandboxVisible, setSandboxVisible] = useState(false);
+  const [sandboxProvider, setSandboxProvider] = useState<string>("isolated-local");
+  const [sandboxUrl, setSandboxUrl] = useState<string>("");
   const [sandboxKey, setSandboxKey] = useState("");
+  const [sandboxProbes, setSandboxProbes] = useState<Array<{ type: string; available: boolean; latencyMs?: number; details?: string; socketPath?: string }>>([]);
   const [sandboxCheck, setSandboxCheck] = useState<{ state: "idle" | "testing" | "success" | "error"; message: string }>({ state: "idle", message: "" });
   const [modelCheck, setModelCheck] = useState<{ state: "idle" | "testing" | "success" | "error"; message: string }>({ state: "idle", message: "" });
   const [connectionCheck, setConnectionCheck] = useState<{ state: "idle" | "testing" | "success" | "error"; message: string }>({ state: "idle", message: "" });
   const { form, setForm, update, updateSsh, updateModelKey, updateNotifications } = useFirstRunFormState();
+
+  const API = import.meta.env.VITE_CONTROL_PLANE_ORIGIN ?? "";
+
+  // Auto-probe sandbox runtimes on mount
+  useState(() => {
+    fetch(`${API}/api/sandboxes/probes`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data.probes)) {
+          setSandboxProbes(data.probes);
+          if (data.activeProvider) setSandboxProvider(data.activeProvider);
+        }
+      })
+      .catch(() => {});
+  });
 
   const finishSetup = (submitted: FirstRunFormState = form) => {
     const completedPreferences: FirstRunPreferences = { ...submitted, completedAt: new Date().toISOString() };
@@ -201,12 +219,51 @@ export function FirstRunSetup({
   };
 
   const saveSandbox = async () => {
-    if (!sandboxKey.trim()) return;
-    setSandboxCheck({ state: "testing", message: "Contacting the sandbox provider…" });
-    const result = onConfigureSandbox
-      ? await onConfigureSandbox(sandboxKey.trim())
-      : await new Promise<{ ok: boolean; message: string }>((resolve) => window.setTimeout(() => resolve({ ok: true, message: "Mock sandbox provider key accepted. A backend callback can replace this configure step." }), 650));
-    setSandboxCheck({ state: result.ok ? "success" : "error", message: result.message });
+    setSandboxCheck({ state: "testing", message: "Probing and configuring sandbox…" });
+    try {
+      // 1. Probe specific runner
+      const probeRes = await fetch(`${API}/api/sandboxes/probe/${sandboxProvider}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          socketPath: sandboxUrl.trim(),
+          serverUrl: sandboxUrl.trim(),
+          apiKey: sandboxKey.trim(),
+        }),
+      });
+      const probeData = await probeRes.json();
+      if (!probeData.available && (sandboxProvider === "podman" || sandboxProvider === "docker" || sandboxProvider === "daytona-custom")) {
+        setSandboxCheck({
+          state: "error",
+          message: probeData.error || probeData.details || "Sandbox runner probe failed.",
+        });
+        return;
+      }
+
+      // 2. Persist
+      const res = await fetch(`${API}/api/settings/sandbox`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: sandboxProvider,
+          serverUrl: sandboxUrl.trim(),
+          apiKey: sandboxKey.trim(),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.details?.[0] || err.error || "Failed to configure sandbox");
+      }
+      setSandboxCheck({
+        state: "success",
+        message: `${sandboxProvider} sandbox successfully calibrated and active.`,
+      });
+    } catch (err) {
+      setSandboxCheck({
+        state: "error",
+        message: err instanceof Error ? err.message : "The sandbox test could not be completed.",
+      });
+    }
   };
   const saveModel = async () => {
     const apiKey = form.modelKeys.apiKey?.trim();
@@ -253,7 +310,87 @@ export function FirstRunSetup({
               <section className="setup-model-keys" aria-label="Model configuration"><button type="button" className="setup-model-keys-trigger" onClick={() => setModelsExpanded((value) => !value)} aria-expanded={modelsExpanded}><span><KeyRound size={15} /><strong>Model configuration</strong><small>Optional local session configuration</small></span><ChevronDown size={15} /></button>{modelsExpanded && <div className="setup-model-keys-body"><label className="setup-field"><span>API key</span><span className="setup-secret-field"><input type={apiKeyVisible ? "text" : "password"} value={form.modelKeys.apiKey} onChange={(event) => updateModelKey("apiKey", event.target.value)} autoComplete="off" /><button type="button" onClick={() => setApiKeyVisible((value) => !value)} aria-label={apiKeyVisible ? "Hide API key" : "Show API key"}>{apiKeyVisible ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label><label className="setup-field"><span>LLM endpoint</span><input value={form.modelKeys.localLlmEndpoint} onChange={(event) => updateModelKey("localLlmEndpoint", event.target.value)} placeholder="http://localhost:11434" autoComplete="off" /></label><p className="setup-security-note"><LockKeyhole size={14} /><span><strong>Security note</strong> The API key remains in this tab's memory only and is excluded from local storage and telemetry.</span></p></div>}</section>
             {modelsExpanded && <div className="setup-test-row"><button type="button" className="setup-test-button" onClick={() => void saveModel()} disabled={modelCheck.state === "testing"}>{modelCheck.state === "testing" ? "Configuring…" : "Save model key"}</button>{modelCheck.state !== "idle" && <span className={`setup-test-result is-${modelCheck.state}`} aria-live="polite">{modelCheck.message}</span>}</div>}
 
-              <section className="setup-model-keys" aria-label="Sandbox provider"><button type="button" className="setup-model-keys-trigger" onClick={() => setSandboxExpanded((value) => !value)} aria-expanded={sandboxExpanded}><span><Box size={15} /><strong>Sandbox provider</strong><small>Optional Daytona sandbox for protected execution</small></span><ChevronDown size={15} /></button>{sandboxExpanded && <div className="setup-model-keys-body"><label className="setup-field"><span>Daytona API key</span><span className="setup-secret-field"><input type={sandboxVisible ? "text" : "password"} value={sandboxKey} onChange={(event) => setSandboxKey(event.target.value)} autoComplete="off" placeholder="daytona_…" /><button type="button" onClick={() => setSandboxVisible((value) => !value)} aria-label={sandboxVisible ? "Hide Daytona API key" : "Show Daytona API key"}>{sandboxVisible ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label><div className="setup-test-row"><button type="button" className="setup-test-button" onClick={() => void saveSandbox()} disabled={sandboxCheck.state === "testing"}>{sandboxCheck.state === "testing" ? "Configuring…" : "Save sandbox key"}</button>{sandboxCheck.state !== "idle" && <span className={`setup-test-result is-${sandboxCheck.state}`} aria-live="polite">{sandboxCheck.message}</span>}</div><p className="setup-security-note"><LockKeyhole size={14} /><span><strong>Security note</strong> The key is sent only to your local control plane and stored there for the operator session.</span></p></div>}</section>
+              <section className="setup-model-keys" aria-label="Sandbox provider">
+                <button type="button" className="setup-model-keys-trigger" onClick={() => setSandboxExpanded((value) => !value)} aria-expanded={sandboxExpanded}>
+                  <span><Box size={15} /><strong>Sandbox execution runtime</strong><small>Select container or microVM isolation engine</small></span>
+                  <ChevronDown size={15} />
+                </button>
+                {sandboxExpanded && (
+                  <div className="setup-model-keys-body">
+                    <label className="setup-field">
+                      <span>Sandbox isolation type</span>
+                      <select
+                        value={sandboxProvider}
+                        onChange={(e) => setSandboxProvider(e.target.value)}
+                        className="bg-neutral-900 border border-white/10 rounded px-2.5 py-1.5 text-xs text-white"
+                      >
+                        <option value="isolated-local">Simulated Host Process (Local /tmp scratch · Ready)</option>
+                        <option value="podman">
+                          Local Podman Container {sandboxProbes.find((p) => p.type === "podman")?.available ? "· [Detected]" : "· [Not detected]"}
+                        </option>
+                        <option value="docker">
+                          Local Docker Container {sandboxProbes.find((p) => p.type === "docker")?.available ? "· [Detected]" : "· [Not detected]"}
+                        </option>
+                        <option value="daytona-custom">Daytona Dedicated / Self-Hosted (Private URL)</option>
+                        <option value="daytona">Daytona Cloud (TrueForge Native)</option>
+                      </select>
+                    </label>
+
+                    {(sandboxProvider === "podman" || sandboxProvider === "docker") && (
+                      <label className="setup-field">
+                        <span>UNIX Socket Path (optional override)</span>
+                        <input
+                          value={sandboxUrl}
+                          onChange={(e) => setSandboxUrl(e.target.value)}
+                          placeholder={sandboxProvider === "podman" ? "/run/user/1000/podman/podman.sock" : "/var/run/docker.sock"}
+                          autoComplete="off"
+                        />
+                      </label>
+                    )}
+
+                    {sandboxProvider === "daytona-custom" && (
+                      <label className="setup-field">
+                        <span>Dedicated Daytona Server URL</span>
+                        <input
+                          value={sandboxUrl}
+                          onChange={(e) => setSandboxUrl(e.target.value)}
+                          placeholder="https://daytona.internal.mycompany.com"
+                          autoComplete="off"
+                        />
+                      </label>
+                    )}
+
+                    {(sandboxProvider === "daytona" || sandboxProvider === "daytona-custom") && (
+                      <label className="setup-field">
+                        <span>Daytona API Key</span>
+                        <span className="setup-secret-field">
+                          <input
+                            type={sandboxVisible ? "text" : "password"}
+                            value={sandboxKey}
+                            onChange={(event) => setSandboxKey(event.target.value)}
+                            autoComplete="off"
+                            placeholder="daytona_…"
+                          />
+                          <button type="button" onClick={() => setSandboxVisible((value) => !value)} aria-label={sandboxVisible ? "Hide Daytona API key" : "Show Daytona API key"}>
+                            {sandboxVisible ? <EyeOff size={15} /> : <Eye size={15} />}
+                          </button>
+                        </span>
+                      </label>
+                    )}
+
+                    <div className="setup-test-row">
+                      <button type="button" className="setup-test-button" onClick={() => void saveSandbox()} disabled={sandboxCheck.state === "testing"}>
+                        {sandboxCheck.state === "testing" ? "Probing runtime…" : "Calibrate sandbox"}
+                      </button>
+                      {sandboxCheck.state !== "idle" && (
+                        <span className={`setup-test-result is-${sandboxCheck.state}`} aria-live="polite">
+                          {sandboxCheck.message}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </section>
             </section>}
 
             {step === 2 && <section className="setup-step-panel" aria-labelledby="setup-safeguards-title">
