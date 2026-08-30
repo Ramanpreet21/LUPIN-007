@@ -255,38 +255,129 @@ export async function getDemoStatus(workspaceRoot = process.cwd()): Promise<Demo
   }
 }
 
+export const DEMO_ALERT_PRESETS = [
+  {
+    alertname: "HighCPUUsage",
+    severity: "critical",
+    instance: "tf-server:2222",
+    host: "localhost",
+    job: "node_exporter",
+    summary: "High CPU usage detected on tf-server gateway",
+    description: "Instance localhost:2222 CPU usage is 94.2% across cores.",
+  },
+  {
+    alertname: "DiskSpaceCritical",
+    severity: "critical",
+    instance: "client1:22",
+    host: "client1",
+    job: "node_exporter",
+    summary: "Disk space critical on Redis / Database node",
+    description: "Disk usage on client1 is 96.8% (less than 10% remaining in /tmp).",
+  },
+  {
+    alertname: "NginxDown",
+    severity: "critical",
+    instance: "client2:22",
+    host: "client2",
+    job: "nginx",
+    summary: "Nginx web server is down",
+    description: "Nginx on client2 is not responding on port 80.",
+  },
+  {
+    alertname: "MySQLDown",
+    severity: "critical",
+    instance: "client2:22",
+    host: "client2",
+    job: "mysqld",
+    summary: "MySQL database engine is down",
+    description: "MySQL daemon on client2 is not responding to health probes.",
+  },
+  {
+    alertname: "RedisDown",
+    severity: "warning",
+    instance: "client1:22",
+    host: "client1",
+    job: "redis",
+    summary: "Redis cache service is down",
+    description: "Redis instance on client1 stopped unexpectedly.",
+  },
+  {
+    alertname: "HighMemoryUsage",
+    severity: "warning",
+    instance: "client3:22",
+    host: "client3",
+    job: "node_exporter",
+    summary: "Memory pressure detected on API backend",
+    description: "Available memory on client3 is under 15% (OOM killer imminent).",
+  },
+  {
+    alertname: "LoadAverageHigh",
+    severity: "warning",
+    instance: "client3:22",
+    host: "client3",
+    job: "node_exporter",
+    summary: "High system load on API backend",
+    description: "Load average on client3 is 7.42 (exceeds threshold 4.0).",
+  },
+  {
+    alertname: "SSLCertExpiring",
+    severity: "warning",
+    instance: "tf-server:2222",
+    host: "localhost",
+    job: "blackbox-http",
+    summary: "SSL certificate expiring soon",
+    description: "TLS certificate for api.internal expires in 48 hours.",
+  },
+];
+
 export async function triggerDemoPrometheusAlert(
   controlPlanePort = 3001,
   alertOverride?: { alertname?: string; severity?: string; summary?: string; description?: string }
-): Promise<{ ok: boolean; incidentId?: string; error?: string }> {
+): Promise<{ ok: boolean; count?: number; incidentId?: string; error?: string }> {
+  const selectedName = alertOverride?.alertname || "HighCPUUsage";
+
+  let itemsToFire = DEMO_ALERT_PRESETS.filter(
+    (p) => p.alertname.toLowerCase() === selectedName.toLowerCase()
+  );
+
+  if (selectedName === "all" || itemsToFire.length === 0) {
+    itemsToFire = selectedName === "all" ? DEMO_ALERT_PRESETS : [
+      {
+        alertname: selectedName,
+        severity: alertOverride?.severity || "critical",
+        instance: "tf-server:2222",
+        host: "localhost",
+        job: "system",
+        summary: alertOverride?.summary || `${selectedName} detected on target host`,
+        description: alertOverride?.description || `Alert ${selectedName} triggered for demo verification.`,
+      },
+    ];
+  }
+
   const alertPayload = {
     version: "4",
-    groupKey: `{}:{alertname="${alertOverride?.alertname || "HighCPUUsage"}"}`,
+    groupKey: `{}:{alertname="${selectedName}"}`,
     status: "firing",
     receiver: "webhook",
-    alerts: [
-      {
-        status: "firing",
-        labels: {
-          alertname: alertOverride?.alertname || "HighCPUUsage",
-          severity: alertOverride?.severity || "critical",
-          instance: "tf-server:2222",
-          job: "node_exporter",
-          component: "system",
-          host: "localhost",
-        },
-        annotations: {
-          summary: alertOverride?.summary || "CPU usage exceeds 92% on tf-server gateway",
-          description:
-            alertOverride?.description ||
-            "Rogue runaway process PID 4192 consuming 98.4% CPU cycles on primary server. Remediation requires process inspection and service restart.",
-        },
-        startsAt: new Date().toISOString(),
-        endsAt: "0001-01-01T00:00:00Z",
-        generatorURL: "http://localhost:9090/graph",
-        fingerprint: "demo-cpu-alert-007",
+    alerts: itemsToFire.map((item) => ({
+      status: "firing",
+      labels: {
+        alertname: item.alertname,
+        severity: item.severity,
+        instance: item.instance,
+        job: item.job,
+        component: item.job,
+        host: item.host,
       },
-    ],
+      annotations: {
+        summary: item.summary,
+        description: item.description,
+      },
+      startsAt: new Date().toISOString(),
+      endsAt: "0001-01-01T00:00:00Z",
+      generatorURL: "http://localhost:9090/graph",
+      fingerprint: `demo-alert-${item.alertname.toLowerCase()}`,
+    })),
   };
 
   try {
@@ -299,7 +390,7 @@ export async function triggerDemoPrometheusAlert(
     if (res.ok) {
       const data = (await res.json()) as { incidentId?: string; id?: string; incidents?: Array<{ id: string }> };
       const incidentId = data.incidentId || data.id || data.incidents?.[0]?.id;
-      return { ok: true, incidentId };
+      return { ok: true, count: itemsToFire.length, incidentId };
     }
 
     return { ok: false, error: `Control plane returned HTTP ${res.status}` };

@@ -200,16 +200,14 @@ export default function Home() {
       .catch(() => {});
   }, []);
 
-  const triggerDemoAlert = async () => {
+  const [selectedAlertToTrigger, setSelectedAlertToTrigger] = useState("HighCPUUsage");
+
+  const triggerDemoAlert = async (alertName = selectedAlertToTrigger) => {
     try {
       const res = await fetch(`${CONTROL_PLANE_ORIGIN}/api/demo/trigger-alert`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          alertname: "HighCPUUsage",
-          summary: "CPU runaway process PID 4192 on tf-server gateway",
-          severity: "critical",
-        }),
+        body: JSON.stringify({ alertname: alertName }),
       });
       const data = await res.json();
       if (data.ok) {
@@ -220,7 +218,7 @@ export default function Home() {
             role: "system",
             label: "PROMETHEUS ALERT",
             time: "NOW",
-            content: "Prometheus AlertManager dispatched HighCPUUsage on tf-server:2222. Incident created in deck.",
+            content: `Prometheus AlertManager fired ${alertName === "all" ? "all 8 cluster alert rules" : alertName} into the Incident Deck. Autonomous loop initiated.`,
           },
         ]);
       }
@@ -501,10 +499,32 @@ export default function Home() {
                     <strong>Demo Environment Active:</strong> SSH Cluster & Container Sandbox configured. Please configure your <strong>Gemini / LLM API Key</strong> in Settings to enable real-time agent reasoning.
                   </span>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <select
+                    value={selectedAlertToTrigger}
+                    onChange={(e) => setSelectedAlertToTrigger(e.target.value)}
+                    style={{
+                      padding: "2px 6px",
+                      borderRadius: "4px",
+                      background: "rgba(0, 0, 0, 0.4)",
+                      border: "1px solid rgba(245, 158, 11, 0.4)",
+                      color: "#fde68a",
+                      fontSize: "11px",
+                    }}
+                  >
+                    <option value="HighCPUUsage">⚡ High CPU (tf-server)</option>
+                    <option value="DiskSpaceCritical">💾 Disk Critical (client1)</option>
+                    <option value="NginxDown">🌐 Nginx Down (client2)</option>
+                    <option value="MySQLDown">🗄️ MySQL Down (client2)</option>
+                    <option value="RedisDown">⚡ Redis Down (client1)</option>
+                    <option value="HighMemoryUsage">🧠 High Memory (client3)</option>
+                    <option value="LoadAverageHigh">📈 Load Avg High (client3)</option>
+                    <option value="SSLCertExpiring">🔒 SSL Expiring (tf-server)</option>
+                    <option value="all">🔥 Fire All 8 Alert Rules</option>
+                  </select>
                   <button
                     type="button"
-                    onClick={triggerDemoAlert}
+                    onClick={() => triggerDemoAlert(selectedAlertToTrigger)}
                     style={{
                       padding: "3px 8px",
                       borderRadius: "4px",
@@ -516,7 +536,7 @@ export default function Home() {
                       fontSize: "11px",
                     }}
                   >
-                    Trigger Alert
+                    Trigger
                   </button>
                   <button
                     type="button"
