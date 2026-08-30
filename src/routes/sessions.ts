@@ -62,7 +62,7 @@ export function createSessionsRouter(opts?: SessionsRouterOptions): Router {
             spec: {
               model: { name: activeModel },
               instructions: INCIDENT_RESPONDER_PROMPT,
-              config: { sandbox: { enabled: true } },
+              config: { sandbox: { enabled: false } },
             },
           },
         });

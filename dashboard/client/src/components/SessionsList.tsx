@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { GalleryVerticalEnd, Clock, Plus } from "lucide-react";
+import { GalleryVerticalEnd, Clock, Plus, Trash2 } from "lucide-react";
 
 const API =
   import.meta.env.VITE_CONTROL_PLANE_ORIGIN ??
@@ -19,6 +19,7 @@ interface SessionsListProps {
   selectedSessionId?: string | null;
   onSelectSession?: (sessionId: string) => void;
   onCreateSession?: () => void;
+  onDeleteSession?: (sessionId: string) => void;
   className?: string;
 }
 
@@ -26,6 +27,7 @@ export function SessionsList({
   selectedSessionId,
   onSelectSession,
   onCreateSession,
+  onDeleteSession,
   className,
 }: SessionsListProps) {
   const [sessions, setSessions] = useState<SessionItem[]>([]);
@@ -42,6 +44,20 @@ export function SessionsList({
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  const handleDelete = useCallback(
+    async (e: React.MouseEvent, id: string) => {
+      e.stopPropagation();
+      setSessions((prev) => prev.filter((s) => s.id !== id));
+      try {
+        await fetch(`${API}/api/sessions/${id}`, { method: "DELETE" });
+        onDeleteSession?.(id);
+      } catch (err) {
+        console.error("Failed to delete session:", err);
+      }
+    },
+    [onDeleteSession],
+  );
 
   useEffect(() => {
     fetchSessions();
@@ -84,24 +100,34 @@ export function SessionsList({
             ? new Date(s.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
             : "";
           return (
-            <button
+            <div
               key={s.id}
               onClick={() => onSelectSession?.(s.id)}
-              className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs transition-colors truncate flex flex-col gap-0.5 border group ${
+              className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs transition-colors truncate flex flex-col gap-0.5 border group relative cursor-pointer ${
                 isSelected
                   ? "bg-emerald-400/15 border-emerald-400/30 text-emerald-200 shadow-[0_0_12px_rgba(108,243,201,0.12)]"
                   : "text-white/70 hover:text-white hover:bg-white/10 border-transparent hover:border-white/10"
               }`}
             >
-              <span className={`truncate font-medium ${isSelected ? "text-emerald-300" : "text-white/90 group-hover:text-emerald-300"}`}>
-                {s.summary || `Session ${s.id.slice(0, 8)}`}
-              </span>
+              <div className="flex items-center justify-between gap-1 w-full">
+                <span className={`truncate font-medium flex-1 ${isSelected ? "text-emerald-300" : "text-white/90 group-hover:text-emerald-300"}`}>
+                  {s.summary || `Session ${s.id.slice(0, 8)}`}
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => void handleDelete(e, s.id)}
+                  className="opacity-0 group-hover:opacity-100 text-white/40 hover:text-red-400 hover:bg-red-400/10 p-0.5 rounded transition-all"
+                  title="Delete session"
+                >
+                  <Trash2 size={11} />
+                </button>
+              </div>
               <div className="flex items-center gap-1.5 text-[9px] text-white/40 font-mono">
                 <Clock size={9} />
                 <span>{formattedTime || s.id.slice(0, 8)}</span>
                 {s.incident_id && <span className="text-amber-400/60 font-mono">· {s.incident_id}</span>}
               </div>
-            </button>
+            </div>
           );
         })}
         {sessions.length === 0 && (
