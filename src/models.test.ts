@@ -42,14 +42,14 @@ describe("models routes", () => {
     };
     assert.ok(Array.isArray(body.data));
     assert.equal(body.data.length, 5);
-    assert.equal(body.active, "anthropic/claude-sonnet-5");
+    assert.equal(body.active, "google-gemini/gemini-3-6-flash");
     assert.deepEqual(
       body.data.map((m) => m.id),
       [
+        "google-gemini/gemini-3-6-flash",
+        "google-gemini/gemini-3-1-pro-preview",
         "anthropic/claude-sonnet-5",
         "anthropic/claude-sonnet-4",
-        "google/gemini-2.5-pro",
-        "google/gemini-2.5-flash",
         "local",
       ]
     );
@@ -57,7 +57,7 @@ describe("models routes", () => {
 
   it("GET /api/models reflects updated active model in settings", async () => {
     const db = getDb();
-    db.prepare("UPDATE settings SET value = ? WHERE key = 'model'").run("google/gemini-2.5-pro");
+    db.prepare("UPDATE settings SET value = ? WHERE key = 'model'").run("google-gemini/gemini-3-1-pro-preview");
 
     const res = await fetch(`${baseUrl}/api/models`);
     assert.equal(res.status, 200);
@@ -65,7 +65,7 @@ describe("models routes", () => {
       data: Array<{ id: string; name: string; provider: string }>;
       active: string;
     };
-    assert.equal(body.active, "google/gemini-2.5-pro");
+    assert.equal(body.active, "google-gemini/gemini-3-1-pro-preview");
   });
 
   it("GET /api/models falls back to default if setting is missing", async () => {
@@ -78,6 +78,6 @@ describe("models routes", () => {
       data: Array<{ id: string; name: string; provider: string }>;
       active: string;
     };
-    assert.equal(body.active, "anthropic/claude-sonnet-5");
+    assert.equal(body.active, "google-gemini/gemini-3-6-flash");
   });
 });

@@ -16,7 +16,8 @@ export interface CliOptions {
 const DEFAULT_PORT = 3000;
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_LOG_LEVEL = "info";
-const DEFAULT_TRUEFORGE_MODEL = "anthropic/claude-sonnet-5";
+const DEFAULT_TRUEFORGE_MODEL = "google-gemini/gemini-3-6-flash";
+const DEFAULT_TRUEFORGE_URL = "http://localhost:8790";
 
 /** Parse a port string/number. Returns undefined for missing or invalid values. */
 export function parsePort(value: string | number | undefined): number | undefined {
@@ -38,7 +39,7 @@ export function loadConfig(env: NodeJS.ProcessEnv, cli: CliOptions = {}): AppCon
     host,
     port,
     logLevel,
-    trueforgeBaseUrl: env.TRUEFORGE_BASE_URL || undefined,
+    trueforgeBaseUrl: env.TRUEFORGE_BASE_URL || DEFAULT_TRUEFORGE_URL,
     trueforgeToken: env.TRUEFORGE_TOKEN || undefined,
     trueforgeModel: env.TRUEFORGE_MODEL || DEFAULT_TRUEFORGE_MODEL,
   };
