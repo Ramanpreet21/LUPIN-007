@@ -30,6 +30,7 @@ const ALLOWED_KEYS = new Set([
   "moonshot_api_key",
   "zai_api_key",
   "operator_name",
+  "setup_completed",
   "skills",
   "mcps",
 ]);

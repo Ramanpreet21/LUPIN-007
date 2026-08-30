@@ -468,14 +468,23 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    fetchFleetHosts();
-  }, [fetchFleetHosts]);
-
-  useEffect(() => {
-    const handleFleetUpdated = () => fetchFleetHosts();
-    window.addEventListener("fleet_updated", handleFleetUpdated);
-    return () => window.removeEventListener("fleet_updated", handleFleetUpdated);
-  }, [fetchFleetHosts]);
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`)
+      .then((r) => r.json())
+      .then((data: Record<string, string>) => {
+        if (data && typeof data === "object") {
+          // If setup_completed is not true in the database (e.g. freshly cleared backend), reset to FirstRunSetup
+          if (data.setup_completed !== "true") {
+            try { window.localStorage.removeItem(LUMA_SETUP_STORAGE_KEY); } catch { /* ignore */ }
+            setStoredSetup(null);
+            setSetupComplete(false);
+          } else {
+            if (data.operator_name) setOperatorLabel(data.operator_name);
+            if (data.enforcement_mode) setApprovalMode(data.enforcement_mode as "AUTONOMOUS" | "STRICT_GATED");
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
@@ -880,12 +889,27 @@ export default function Home() {
     setSshStatus(preferences.launchMode === "LIVE_HOST" ? "DISCONNECTED" : "CONNECTED");
     setSshConnections((current) => [{ id: "primary-target", hostname: preferences.ssh.targetHost, address: `SSH · ${preferences.ssh.sshPort}`, status: preferences.launchMode === "LIVE_HOST" ? "READY" : "CONNECTED", latency: preferences.launchMode === "LIVE_HOST" ? "—" : "1 ms" }, ...current.filter((connection) => connection.id !== "primary-target")]);
     setSetupComplete(true);
+
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        setup_completed: "true",
+        operator_name: preferences.operatorLabel,
+        enforcement_mode: preferences.defaultApprovalMode,
+      }),
+    }).catch(() => {});
   };
   const restartFirstRunSetup = () => {
     try { window.localStorage.removeItem(LUMA_SETUP_STORAGE_KEY); } catch { /* Browser storage can be unavailable. */ }
     setSettingsOpen(false);
     setStoredSetup(null);
     setSetupComplete(false);
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ setup_completed: "false" }),
+    }).catch(() => {});
   };
 
   const configureSandbox = async (apiKey: string) => {
