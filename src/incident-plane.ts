@@ -949,6 +949,8 @@ export function createIncidentRouter({
       if (row?.value) activeModel = row.value;
     } catch { /* fallback */ }
 
+    let tfSessionCreated = false;
+
     if (!sessionId) {
       sessionId = `session-${Date.now()}`;
       if (client && tf.status.state === "ready") {
@@ -958,11 +960,12 @@ export function createIncidentRouter({
               spec: {
                 model: { name: activeModel },
                 instructions: INCIDENT_RESPONDER_PROMPT,
-                config: { sandbox: { enabled: true } },
+                config: { sandbox: { enabled: false } },
               },
             },
           });
           sessionId = data.id;
+          tfSessionCreated = true;
         } catch (err) {
           logger.warn({ event: "converse_session_create_warn", err }, "TrueForge session create failed, using local session");
         }
@@ -993,7 +996,7 @@ export function createIncidentRouter({
       let fullResponse = "";
       let step = 0;
 
-      if (client && tf.status.state === "ready") {
+      if (tfSessionCreated && client && tf.status.state === "ready") {
         try {
           const stream = await client.sessions.createTurnStream(activeSession, {
             input: [{ type: "user.message", content: message }],
