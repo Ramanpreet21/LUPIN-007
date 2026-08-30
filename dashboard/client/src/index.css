@@ -201,9 +201,9 @@ kbd { display: inline-grid; place-items: center; min-width: 21px; height: 18px; 
 .side-modules .terminal-module,
 .side-modules .health-flip-scene,
 .side-modules .archive-module {
-  height: 240px;
-  min-height: 240px;
-  max-height: 240px;
+  height: 260px;
+  min-height: 260px;
+  max-height: 260px;
   flex-shrink: 0;
   box-sizing: border-box;
 }
