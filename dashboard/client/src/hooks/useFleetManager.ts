@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FleetEnvironment, TargetNode } from "@/types/operations";
 
-const API = import.meta.env.VITE_CONTROL_PLANE_ORIGIN ?? "http://localhost:3000";
+const API =
+  import.meta.env.VITE_CONTROL_PLANE_ORIGIN ??
+  (typeof window !== "undefined" && (window.location.port === "3000" || !window.location.port)
+    ? ""
+    : "http://localhost:3001");
 
 interface FleetHostRow {
   id: string;

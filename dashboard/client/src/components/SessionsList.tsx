@@ -1,7 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { GalleryVerticalEnd, Clock, Plus } from "lucide-react";
 
-const API = import.meta.env.VITE_CONTROL_PLANE_ORIGIN ?? "http://localhost:3000";
+const API =
+  import.meta.env.VITE_CONTROL_PLANE_ORIGIN ??
+  (typeof window !== "undefined" && (window.location.port === "3000" || !window.location.port)
+    ? ""
+    : "http://localhost:3001");
 
 export interface SessionItem {
   id: string;
