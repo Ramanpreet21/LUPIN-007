@@ -41,13 +41,23 @@ export function startServer(opts: ServerOptions): Promise<ServerHandle> {
   app.disable("x-powered-by");
   app.use(express.json());
 
-  // CORS: the dashboard (Vite dev on another port, or the Electron host) calls
-  // the control plane cross-origin.
-  app.use((_req: Request, res: Response, next: NextFunction) => {
-    res.set("Access-Control-Allow-Origin", "*");
+  // the control plane cross-origin; restrict access to trusted dashboard origins.
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      const isTrusted =
+        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
+        origin.startsWith("app://") ||
+        origin.startsWith("vscode-webview://") ||
+        origin.startsWith("electron://");
+      if (isTrusted) {
+        res.set("Access-Control-Allow-Origin", origin);
+        res.set("Access-Control-Allow-Credentials", "true");
+      }
+    }
     res.set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
     res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
-    if (_req.method === "OPTIONS") {
+    if (req.method === "OPTIONS") {
       res.sendStatus(204);
       return;
     }

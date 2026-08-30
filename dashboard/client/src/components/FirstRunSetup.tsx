@@ -236,11 +236,8 @@ export function FirstRunSetup({
         finishSetup(demoState);
       }, 600);
     } catch (err) {
-      setDemoStatusText(`Notice: ${err instanceof Error ? err.message : String(err)}. Proceeding with simulated demo.`);
-      setTimeout(() => {
-        setForm(demoFormState);
-        finishSetup(demoFormState);
-      }, 1200);
+      setDemoLaunching(false);
+      setDemoStatusText(`Error: ${err instanceof Error ? err.message : String(err)}. Demo cluster could not be initialized.`);
     }
   };
 

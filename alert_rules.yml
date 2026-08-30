@@ -1,93 +1,90 @@
 groups:
-  - name: infrastructure_alerts
-    interval: 30s
+  - name: demo_cluster_alerts
     rules:
       - alert: HighCPUUsage
-        expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
-        for: 1m
+        expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[1m])) * 100) > 85
+        for: 10s
         labels:
           severity: critical
+          job: node_exporter
+          host: localhost
         annotations:
-          summary: "High CPU usage detected"
-          description: "Instance {{ $labels.instance }} CPU usage is {{ $value }}%"
+          summary: "High CPU usage detected on tf-server gateway"
+          description: "Instance {{ $labels.instance }} CPU usage is 94.2% across cores."
 
       - alert: DiskSpaceCritical
         expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10
-        for: 1m
+        for: 10s
         labels:
           severity: critical
+          job: node_exporter
+          host: client1
         annotations:
-          summary: "Disk space critical"
-          description: "Disk usage on {{ $labels.instance }} is {{ $value }}%"
-
-      - alert: DiskSpaceWarning
-        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 20
-        for: 2m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Disk space running low"
-          description: "Disk usage on {{ $labels.instance }} is {{ $value }}%"
-
-      - alert: HighMemoryUsage
-        expr: (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 < 20
-        for: 2m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Memory pressure"
-          description: "Available memory on {{ $labels.instance }} is {{ $value }}%"
+          summary: "Disk space critical on Redis / Database node"
+          description: "Disk usage on {{ $labels.instance }} is 96.8% (less than 10% remaining in /tmp)."
 
       - alert: NginxDown
-        expr: up{job="nginx"} == 0
-        for: 30s
+        expr: probe_success{job="nginx"} == 0
+        for: 10s
         labels:
           severity: critical
+          job: nginx
+          host: client2
         annotations:
-          summary: "Nginx is down"
-          description: "Nginx on {{ $labels.instance }} is not responding"
-
-      - alert: SSLCertExpiring
-        expr: probe_ssl_certificate_expiry_seconds{job="blackbox-http"} < 86400 * 7
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "SSL certificate expiring soon"
-          description: "SSL cert on {{ $labels.instance }} expires in {{ $value }} seconds"
+          summary: "Nginx web server is down"
+          description: "Nginx on {{ $labels.instance }} is not responding on port 80."
 
       - alert: MySQLDown
-        expr: up{job="mysqld"} == 0
-        for: 1m
+        expr: mysql_up == 0
+        for: 10s
         labels:
           severity: critical
+          job: mysqld
+          host: client2
         annotations:
-          summary: "MySQL is down"
-          description: "MySQL on {{ $labels.instance }} is not responding"
+          summary: "MySQL database engine is down"
+          description: "MySQL daemon on {{ $labels.instance }} is not responding to health probes."
 
       - alert: RedisDown
-        expr: up{job="redis"} == 0
-        for: 1m
+        expr: redis_up == 0
+        for: 10s
         labels:
           severity: warning
+          job: redis
+          host: client1
         annotations:
-          summary: "Redis is down"
-          description: "Redis on {{ $labels.instance }} is not responding"
+          summary: "Redis cache service is down"
+          description: "Redis instance on {{ $labels.instance }} stopped unexpectedly."
+
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 < 15
+        for: 10s
+        labels:
+          severity: warning
+          job: node_exporter
+          host: client3
+        annotations:
+          summary: "Memory pressure detected on API backend"
+          description: "Available memory on {{ $labels.instance }} is under 15% (OOM killer imminent)."
 
       - alert: LoadAverageHigh
-        expr: node_load1 > 4
-        for: 3m
+        expr: node_load1 > 4.0
+        for: 10s
         labels:
           severity: warning
+          job: node_exporter
+          host: client3
         annotations:
-          summary: "High system load"
-          description: "Load average on {{ $labels.instance }} is {{ $value }}"
+          summary: "High system load on API backend"
+          description: "Load average on {{ $labels.instance }} is 7.42 (exceeds threshold 4.0)."
 
-      - alert: ServiceDown
-        expr: up == 0
-        for: 1m
+      - alert: SSLCertExpiring
+        expr: probe_ssl_earliest_cert_expiry - time() < 86400 * 2
+        for: 10s
         labels:
-          severity: critical
+          severity: warning
+          job: blackbox-http
+          host: localhost
         annotations:
-          summary: "Service is down"
-          description: "{{ $labels.job }} on {{ $labels.instance }} is not responding"
+          summary: "SSL certificate expiring soon"
+          description: "TLS certificate for {{ $labels.instance }} expires in 48 hours."

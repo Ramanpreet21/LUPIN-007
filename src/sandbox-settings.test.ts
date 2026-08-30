@@ -48,7 +48,14 @@ function makeSandboxHandle(state: ProviderState) {
   return { handle, state };
 }
 
+import { initDb } from "./db";
+
 async function withSandboxServer(state: ProviderState) {
+  try {
+    initDb(":memory:");
+  } catch {
+    // Already initialized
+  }
   const { handle } = makeSandboxHandle(state);
   return startServer({
     host: "127.0.0.1",
@@ -296,3 +303,64 @@ test("PUT /api/settings/sandbox with unavailable local docker/podman returns 400
   }
 });
 
+test("GET /api/settings masks sandbox_key and returns allowlisted preferences", async () => {
+  const state: ProviderState = { data: { status: "ready", statusReason: null }, createCalls: [] };
+  const server = await withSandboxServer(state);
+  try {
+    const put = await fetch(`${baseUrl(server.port)}/api/settings/sandbox`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ apiKey: "super-secret-key-12345" }),
+    });
+    assert.equal(put.status, 200);
+
+    const res = await fetch(`${baseUrl(server.port)}/api/settings`);
+    assert.equal(res.status, 200);
+    const settings = (await res.json()) as Record<string, unknown>;
+
+    assert.notEqual(settings.sandbox_key, "super-secret-key-12345");
+    assert.equal(settings.sandbox_key, true);
+    assert.equal(settings.sandbox_key_configured, true);
+  } finally {
+    await server.close();
+  }
+});
+
+test("PUT /api/settings rejects unauthorized or sandbox keys", async () => {
+  const state: ProviderState = { data: { status: "ready", statusReason: null }, createCalls: [] };
+  const server = await withSandboxServer(state);
+  try {
+    const res = await fetch(`${baseUrl(server.port)}/api/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sandbox_key: "injected-key", arbitrary_key: "value" }),
+    });
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error: string; details: string[] };
+    assert.equal(body.error, "invalid_settings_key");
+  } finally {
+    await server.close();
+  }
+});
+
+test("PUT /api/settings accepts valid non-secret preference updates", async () => {
+  const state: ProviderState = { data: { status: "ready", statusReason: null }, createCalls: [] };
+  const server = await withSandboxServer(state);
+  try {
+    const res = await fetch(`${baseUrl(server.port)}/api/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operator_name: "Alice", enforcement_mode: "AUTONOMOUS" }),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { ok: boolean };
+    assert.equal(body.ok, true);
+
+    const getRes = await fetch(`${baseUrl(server.port)}/api/settings`);
+    const settings = (await getRes.json()) as Record<string, unknown>;
+    assert.equal(settings.operator_name, "Alice");
+    assert.equal(settings.enforcement_mode, "AUTONOMOUS");
+  } finally {
+    await server.close();
+  }
+});

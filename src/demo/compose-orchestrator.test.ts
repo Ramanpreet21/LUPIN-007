@@ -54,3 +54,71 @@ test("fleet hosts table can be populated with demo cluster nodes", () => {
   assert.equal(row.ssh_user, "root");
   assert.equal(row.last_probe_status, "online");
 });
+
+test("triggerDemoPrometheusAlert merges custom severity and description into preset", async () => {
+  // Test alert triggering payload merging by running against mock server
+  let capturedBody: any = null;
+  const mockServer = require("node:http").createServer((req: any, res: any) => {
+    let raw = "";
+    req.on("data", (chunk: any) => (raw += chunk));
+    req.on("end", () => {
+      capturedBody = JSON.parse(raw);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, incidentId: "inc-123" }));
+    });
+  });
+
+  await new Promise<void>((resolve) => mockServer.listen(0, "127.0.0.1", resolve));
+  const port = mockServer.address().port;
+
+  try {
+    const { triggerDemoPrometheusAlert } = require("./compose-orchestrator");
+    const result = await triggerDemoPrometheusAlert(port, {
+      alertname: "HighCPUUsage",
+      severity: "warning",
+      summary: "Custom CPU spike",
+      description: "Overridden CPU description",
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.incidentId, "inc-123");
+    assert.ok(capturedBody);
+    assert.equal(capturedBody.alerts.length, 1);
+    assert.equal(capturedBody.alerts[0].labels.alertname, "HighCPUUsage");
+    assert.equal(capturedBody.alerts[0].labels.severity, "warning");
+    assert.equal(capturedBody.alerts[0].annotations.summary, "Custom CPU spike");
+    assert.equal(capturedBody.alerts[0].annotations.description, "Overridden CPU description");
+  } finally {
+    mockServer.close();
+  }
+});
+
+test("demo router rejects untrusted cross-origin requests with 403", async () => {
+  const { startServer } = require("../server");
+  const { createDemoRouter } = require("../routes/demo");
+  const { createLogger } = require("../logger");
+
+  const logger = createLogger("silent");
+  const server = await startServer({
+    host: "127.0.0.1",
+    port: 0,
+    logger,
+    getStatus: () => ({ state: "ready", baseUrlConfigured: true, authConfigured: false }),
+    registerRoutes: (app: any) => {
+      app.use(createDemoRouter({ logger, port: 3001 }));
+    },
+  });
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/demo/start`, {
+      method: "POST",
+      headers: { Origin: "http://malicious-site.com" },
+    });
+    assert.equal(res.status, 403);
+    const data = (await res.json()) as { ok: boolean; error: string };
+    assert.equal(data.ok, false);
+    assert.equal(data.error, "forbidden_origin");
+  } finally {
+    await server.close();
+  }
+});
