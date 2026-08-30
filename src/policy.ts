@@ -4,6 +4,9 @@
  * and risk-scoring simulation for the AST Governance canvas.
  */
 
+import { splitCompoundStatements, extractCommandSubstitutions } from "./command-scope";
+import { effectiveCommand } from "./shell-parse";
+
 export type PolicyCategory =
   | "DESTRUCTIVE_FS"
   | "PRIVILEGE_ESCALATION"
@@ -122,10 +125,10 @@ const MAX_COMMAND_LENGTH = 4096;
  * Validate that a regex is syntactically valid and free of dangerous nested quantifiers.
  */
 export function validateSafeRegex(pattern: string): void {
-  const trimmed = pattern.trim();
-  if (!trimmed) {
+  if (typeof pattern !== "string" || !pattern.trim()) {
     throw new Error("Regex pattern must be a non-empty string");
   }
+  const trimmed = pattern.trim();
   if (trimmed.length > MAX_REGEX_LENGTH) {
     throw new Error(`Regex length exceeds maximum allowed length of ${MAX_REGEX_LENGTH} characters`);
   }
@@ -156,7 +159,9 @@ export function createPolicyRule(input: Omit<PolicyRule, "id">): PolicyRule {
 export function updatePolicyRule(id: string, patch: Partial<PolicyRule>): PolicyRule | undefined {
   const existing = rulesStore.get(id);
   if (!existing) return undefined;
-  if (patch.regex) validateSafeRegex(patch.regex);
+  if ("regex" in patch && patch.regex !== undefined) {
+    validateSafeRegex(patch.regex);
+  }
   const updated: PolicyRule = { ...existing, ...patch, id };
   rulesStore.set(id, updated);
   return updated;
@@ -170,6 +175,15 @@ export function resetPolicyRules(): void {
   rulesStore = new Map(DEFAULT_RULES.map((r) => [r.id, { ...r }]));
 }
 
+function normalizeLeadingBinary(stmt: string): string {
+  const trimmed = stmt.trim();
+  const firstSpace = trimmed.indexOf(" ");
+  const firstWord = firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace);
+  const rest = firstSpace === -1 ? "" : trimmed.slice(firstSpace);
+  const exe = firstWord.slice(firstWord.lastIndexOf("/") + 1);
+  return `${exe}${rest}`;
+}
+
 /**
  * Break a command into AST nodes for syntax canvas visualization.
  */
@@ -179,16 +193,18 @@ function parseAstNodes(command: string): AstNode[] {
     return [{ id: "node-0", label: "Empty", kind: "(empty)", risk: "low" }];
   }
 
-  const parts = trimmed.split(/\s+/);
+  const effective = effectiveCommand(trimmed);
+  const parts = effective.split(/\s+/);
   const nodes: AstNode[] = [];
 
   // Root command node
-  const rootExe = parts[0];
-  const isRiskyExe = ["rm", "mkfs", "dd", "fdisk", "eval"].includes(rootExe);
+  const rawExe = parts[0] || "";
+  const rootExe = rawExe.slice(rawExe.lastIndexOf("/") + 1);
+  const isRiskyExe = ["mkfs", "dd", "fdisk", "eval", "kill", "reboot", "shutdown"].includes(rootExe) || rootExe.startsWith("mkfs.");
   nodes.push({
     id: "node-root",
     label: "Command",
-    kind: rootExe,
+    kind: rootExe || rawExe,
     risk: isRiskyExe ? "high" : "low",
   });
 
@@ -199,21 +215,21 @@ function parseAstNodes(command: string): AstNode[] {
     let risk: AstNode["risk"] = "low";
 
     if (part.startsWith("-")) {
-      label = "Flag / Option";
+      label = "Flag";
       if (["-rf", "-fr", "--no-preserve-root", "-delete", "-9", "-KILL"].includes(part)) {
         risk = "high";
-      } else if (["-T", "--upload-file", "-d"].includes(part)) {
+      } else if (["-T", "--upload-file", "-d", "--output", "-o", "-O"].includes(part) || part.startsWith("--output=")) {
         risk = "medium";
       }
     } else if (part.startsWith("/") || part.startsWith("./") || part.startsWith("~/")) {
-      label = "Path / Target";
+      label = "Path";
       if (part === "/" || part.startsWith("/etc") || part.startsWith("/var/lib")) {
         risk = "high";
       } else if (part.startsWith("/var/log") || part.startsWith("/tmp")) {
         risk = "medium";
       }
     } else if (["stop", "disable", "restart", "kill", "777", "a+rwx"].includes(part)) {
-      label = "Action / Modifier";
+      label = "Action";
       risk = ["stop", "disable", "777", "a+rwx"].includes(part) ? "high" : "medium";
     }
 
@@ -238,10 +254,23 @@ export function simulatePolicy(command: string): AstSimulationResult {
 
   const activeRules = listPolicyRules().filter((r) => r.enabled);
 
+  // Extract all sub-statements, substitutions, and their effective commands
+  const stmts = splitCompoundStatements(trimmed);
+  const subs = extractCommandSubstitutions(trimmed);
+  const allFragments = Array.from(new Set([trimmed, ...stmts, ...subs]));
+  const targetsToTest = Array.from(
+    new Set([
+      ...allFragments,
+      ...allFragments.map((f) => effectiveCommand(f)),
+      ...allFragments.map((f) => normalizeLeadingBinary(f)),
+      ...allFragments.map((f) => normalizeLeadingBinary(effectiveCommand(f))),
+    ]),
+  );
+
   for (const rule of activeRules) {
     try {
       const rx = new RegExp(rule.regex, "i");
-      if (rx.test(trimmed)) {
+      if (targetsToTest.some((target) => rx.test(target))) {
         matchedRules.push(rule);
       }
     } catch {

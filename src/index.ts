@@ -2,7 +2,7 @@
 import { loadConfig, parsePort } from "./config";
 import { createLogger, type Logger } from "./logger";
 import { initTrueForge } from "./trueforge";
-import { initDb } from "./db";
+import { initDb, closeDb } from "./db";
 import { startServer } from "./server";
 import { createIncidentRouter } from "./incident-plane";
 import { createSandboxRouter } from "./routes/sandbox";
@@ -81,14 +81,12 @@ async function main(): Promise<void> {
   const config = loadConfig(process.env, { port: args.port, host: args.host });
   const logger: Logger = createLogger(config.logLevel);
 
-  const db = initDb();
+  initDb();
 
   const tf = initTrueForge(
     { baseUrl: config.trueforgeBaseUrl, token: config.trueforgeToken },
     logger,
   );
-
-  initDb();
 
   let server;
   try {
@@ -133,7 +131,14 @@ async function main(): Promise<void> {
       void server
         .close()
         .catch((err: unknown) => logger.error({ event: "shutdown_error", err }, "error during shutdown"))
-        .finally(() => process.exit(0));
+        .finally(() => {
+          try {
+            closeDb();
+          } catch (err) {
+            logger.error({ event: "shutdown_db_error", err }, "error closing database");
+          }
+          process.exit(0);
+        });
     });
   }
 }

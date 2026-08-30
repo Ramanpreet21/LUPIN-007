@@ -52,7 +52,16 @@ describe("sessions routes", () => {
 
   beforeEach(() => {
     const db = getDb();
+    db.prepare("DELETE FROM session_messages").run();
     db.prepare("DELETE FROM sessions").run();
+    db.prepare("DELETE FROM incidents").run();
+    const insertInc = db.prepare(
+      `INSERT INTO incidents (id, status, alert_json, created_at, updated_at)
+       VALUES (@id, 'created', '{}', datetime('now'), datetime('now'))`
+    );
+    insertInc.run({ id: "inc-1" });
+    insertInc.run({ id: "inc-2" });
+    insertInc.run({ id: "inc-456" });
   });
 
   it("GET /api/sessions returns empty array initially", async () => {

@@ -57,6 +57,29 @@ test("policy CRUD manages in-memory rule store", () => {
   assert.equal(getPolicyRule(custom.id), undefined);
 });
 
+test("updatePolicyRule validates regex when property is present, including empty string", () => {
+  const rule = createPolicyRule({
+    name: "Test rule",
+    regex: "test\\s+cmd",
+    category: "PROCESS_TERMINATION",
+    severity: "REQUIRE_APPROVAL",
+    enabled: true,
+  });
+
+  // Updating with empty string should throw
+  assert.throws(() => {
+    updatePolicyRule(rule.id, { regex: "" });
+  }, /Regex pattern must be a non-empty string/);
+
+  assert.throws(() => {
+    updatePolicyRule(rule.id, { regex: "   " });
+  }, /Regex pattern must be a non-empty string/);
+
+  // Updating with valid regex should succeed
+  const updated = updatePolicyRule(rule.id, { regex: "new\\s+pattern" });
+  assert.equal(updated?.regex, "new\\s+pattern");
+});
+
 test("simulatePolicy evaluates AST risk score and detects tripped nodes", () => {
   const result = simulatePolicy("rm -rf /var/log/postgresql/*");
   assert.equal(result.command, "rm -rf /var/log/postgresql/*");
@@ -64,6 +87,20 @@ test("simulatePolicy evaluates AST risk score and detects tripped nodes", () => 
   assert.ok(result.matchedRules.some((r) => r.category === "DESTRUCTIVE_FS"));
   assert.ok(result.nodes.length >= 3);
   assert.ok(result.trippedNode.length > 0);
+});
+
+test("simulatePolicy detects policy violations behind wrappers and shell launchers", () => {
+  const sudoResult = simulatePolicy("sudo /bin/rm -rf /var/log/postgresql/*");
+  assert.ok(sudoResult.riskScore >= 80);
+  assert.ok(sudoResult.matchedRules.some((r) => r.id === "rule-rm-wildcard"));
+
+  const shellResult = simulatePolicy("bash -ec 'rm -rf /etc'");
+  assert.ok(shellResult.riskScore >= 80);
+  assert.ok(shellResult.matchedRules.some((r) => r.id === "rule-rm-wildcard"));
+
+  const compoundResult = simulatePolicy("echo done; chmod 777 /etc/nginx/site.conf");
+  assert.ok(compoundResult.riskScore >= 50);
+  assert.ok(compoundResult.matchedRules.some((r) => r.id === "rule-permissions"));
 });
 
 test("simulatePolicy scores clean commands with low risk", () => {

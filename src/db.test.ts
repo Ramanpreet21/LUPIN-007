@@ -64,4 +64,65 @@ describe("db", () => {
 
     db.close();
   });
+
+  it("enforces foreign key constraint on session_messages inserting with non-existent session_id", () => {
+    const db = initDb(TEST_DB_PATH);
+
+    assert.throws(() => {
+      db.prepare(
+        `INSERT INTO session_messages (id, session_id, role, label, content, created_at)
+         VALUES ('msg-invalid', 'non-existent-session', 'user', 'OPERATOR', 'hello', datetime('now'))`
+      ).run();
+    }, /FOREIGN KEY constraint failed/i);
+
+    db.close();
+  });
+
+  it("enforces foreign key constraint on sessions inserting with non-existent incident_id", () => {
+    const db = initDb(TEST_DB_PATH);
+
+    assert.throws(() => {
+      db.prepare(
+        `INSERT INTO sessions (id, thread_id, incident_id, summary, created_at)
+         VALUES ('sess-invalid', 'th-1', 'non-existent-incident', 'test', datetime('now'))`
+      ).run();
+    }, /FOREIGN KEY constraint failed/i);
+
+    db.close();
+  });
+
+  it("cascades deletion from incident to sessions and session_messages", () => {
+    const db = initDb(TEST_DB_PATH);
+
+    db.prepare(
+      `INSERT INTO incidents (id, status, alert_json, created_at, updated_at)
+       VALUES ('inc-test-fk', 'created', '{}', datetime('now'), datetime('now'))`
+    ).run();
+
+    db.prepare(
+      `INSERT INTO sessions (id, thread_id, incident_id, summary, created_at)
+       VALUES ('sess-test-fk', 'th-1', 'inc-test-fk', 'summary', datetime('now'))`
+    ).run();
+
+    db.prepare(
+      `INSERT INTO session_messages (id, session_id, role, label, content, created_at)
+       VALUES ('msg-test-fk', 'sess-test-fk', 'user', 'OPERATOR', 'hello', datetime('now'))`
+    ).run();
+
+    // Verify rows exist
+    assert.ok(db.prepare("SELECT id FROM incidents WHERE id = 'inc-test-fk'").get());
+    assert.ok(db.prepare("SELECT id FROM sessions WHERE id = 'sess-test-fk'").get());
+    assert.ok(db.prepare("SELECT id FROM session_messages WHERE id = 'msg-test-fk'").get());
+
+    // Delete parent incident
+    db.prepare("DELETE FROM incidents WHERE id = 'inc-test-fk'").run();
+
+    // Verify cascade deletion
+    assert.equal(db.prepare("SELECT id FROM incidents WHERE id = 'inc-test-fk'").get(), undefined);
+    assert.equal(db.prepare("SELECT id FROM sessions WHERE id = 'sess-test-fk'").get(), undefined);
+    assert.equal(db.prepare("SELECT id FROM session_messages WHERE id = 'msg-test-fk'").get(), undefined);
+
+    db.close();
+  });
 });
+

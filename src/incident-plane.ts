@@ -16,7 +16,7 @@ import type { Logger } from "./logger";
 import type { TrueForgeHandle } from "./trueforge";
 import { INCIDENT_RESPONDER_PROMPT, CONVERSATIONAL_ASSISTANT_PROMPT, SAFETY_POLICY } from "./trueforge-config";
 import { captureTargetState, formatCapturedState } from "./capture";
-import { formatScopedDiff } from "./command-scope";
+import { formatScopedDiff, commandScope, type CommandScope } from "./command-scope";
 import {
   createIncident,
   getIncident,
@@ -29,11 +29,7 @@ import {
   type SafetyBadge,
 } from "./incidents";
 import { getDb } from "./db";
-
-import { captureTargetState } from "./capture";
 import { LOCAL_MCP_NAME, TOOL_NAMES } from "./mcp-provider";
-
-import { commandScope, type CommandScope } from "./command-scope";
 
 /**
  * WebSocket event catalog for the incident plane. Envelope shape follows the
@@ -212,7 +208,8 @@ export function createIncidentRouter({
     // Snapshot the host before the sandbox session so the diagnosis is grounded
     // in live state (5c). Capture is best-effort — a missing binary or a locked
     // shell degrades the prompt, it never fails the incident.
-    const stateBlock = await captureTargetState(alert);
+    const capturedState = await captureTargetState(alert.target_host, alert.service_name);
+    const stateBlock = formatCapturedState(capturedState);
     let step = 0;
     let turnId: string | undefined;
     let sessionId: string | undefined;
@@ -220,9 +217,6 @@ export function createIncidentRouter({
     // every referenced call, not just the last message's toolCalls list.
     const toolCallById = new Map<string, ToolCall>();
     try {
-      // Capture target host system state before creating session (PR #5 §5c)
-      const capturedState = await captureTargetState(alert.target_host, alert.service_name);
-      const stateBlock = formatCapturedState(capturedState);
 
       let activeModel = model;
       try {
@@ -618,6 +612,19 @@ export function createIncidentRouter({
         refused += 1;
         continue;
       }
+      try {
+        const db = getDb();
+        db.prepare(
+          `INSERT OR IGNORE INTO incidents (id, status, alert_json, created_at, updated_at)
+           VALUES (@id, @status, @alert_json, @created_at, @updated_at)`
+        ).run({
+          id: incident.id,
+          status: incident.status,
+          alert_json: JSON.stringify(incident.alert),
+          created_at: incident.createdAt,
+          updated_at: incident.createdAt,
+        });
+      } catch { /* DB persistence is best-effort */ }
       incidentIds.push(incident.id);
       broadcast({
         type: "incident_created",

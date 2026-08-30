@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   thread_id TEXT,
   incident_id TEXT,
   summary TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (incident_id) REFERENCES incidents(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS session_messages (
@@ -56,7 +57,8 @@ CREATE TABLE IF NOT EXISTS session_messages (
   role TEXT NOT NULL,
   label TEXT NOT NULL,
   content TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_session_messages_session ON session_messages(session_id, created_at);
 
@@ -221,4 +223,11 @@ export function initDb(dbPath = "./data/incident-deck.db"): Database.Database {
 export function getDb(): Database.Database {
   if (!_db) throw new Error("Database not initialized — call initDb() first");
   return _db;
+}
+
+export function closeDb(): void {
+  if (_db) {
+    _db.close();
+    _db = null;
+  }
 }
