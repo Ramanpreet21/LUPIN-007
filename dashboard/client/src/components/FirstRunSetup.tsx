@@ -81,13 +81,21 @@ const steps = [
   { id: "safeguards", label: "Safeguards", icon: LockKeyhole },
 ] as const;
 
+const DEFAULT_MODELS = [
+  { id: "google-gemini/gemini-3-6-flash", name: "Gemini 3.6 Flash", provider: "Google" },
+  { id: "google-gemini/gemini-3-1-pro-preview", name: "Gemini 3.1 Pro Preview", provider: "Google" },
+  { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5", provider: "Anthropic" },
+  { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4", provider: "Anthropic" },
+  { id: "local", name: "Local Model", provider: "Local" },
+];
+
 const defaultFormState: FirstRunFormState = {
   operatorLabel: "Lead-SRE-1",
   interfaceMode: "Night",
   launchMode: "LIVE_HOST",
   defaultApprovalMode: "STRICT_GATED",
   ssh: { targetHost: "192.168.1.104", sshPort: 22, userKeyPath: "~/.ssh/id_rsa" },
-  modelKeys: { apiKey: "", localLlmEndpoint: "anthropic/claude-sonnet-5", baseUrl: "http://localhost:11434" },
+  modelKeys: { apiKey: "", localLlmEndpoint: "google-gemini/gemini-3-6-flash", baseUrl: "http://localhost:11434" },
   notifications: { enableDesktopAlerts: true, enableSoundAlerts: false },
   sandboxUrl: "",
 };
@@ -97,7 +105,7 @@ const demoFormState: FirstRunFormState = {
   operatorLabel: "Operator-1",
   launchMode: "DEMO_MOCK",
   ssh: { targetHost: "localhost", sshPort: 22, userKeyPath: "~/.ssh/id_rsa" },
-  modelKeys: { apiKey: "", localLlmEndpoint: "anthropic/claude-sonnet-5", baseUrl: "http://localhost:11434" },
+  modelKeys: { apiKey: "", localLlmEndpoint: "google-gemini/gemini-3-6-flash", baseUrl: "http://localhost:11434" },
   sandboxUrl: "",
 };
 
@@ -174,7 +182,7 @@ export function FirstRunSetup({
   const [sandboxKey, setSandboxKey] = useState("");
   const [sandboxCheck, setSandboxCheck] = useState<{ state: "idle" | "testing" | "success" | "error"; message: string }>({ state: "idle", message: "" });
   const [connectionCheck, setConnectionCheck] = useState<{ state: "idle" | "testing" | "success" | "error"; message: string }>({ state: "idle", message: "" });
-  const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
+  const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>(DEFAULT_MODELS);
   const { form, setForm, update, updateSsh, updateModelKey, updateNotifications } = useFirstRunFormState();
 
   useEffect(() => {
