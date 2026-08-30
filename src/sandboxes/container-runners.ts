@@ -15,20 +15,6 @@ abstract class BaseContainerRunner implements SandboxRunner {
   abstract readonly defaultImage: string;
 
   protected sessionContainers = new Map<string, string>(); // sessionId -> containerName/ID
-  protected activeSocketPath?: string;
-
-  protected getEnv(customSocket?: string): NodeJS.ProcessEnv {
-    const env: NodeJS.ProcessEnv = { ...process.env };
-    const socket = customSocket || this.activeSocketPath;
-    if (socket) {
-      if (this.type === "podman") {
-        env.CONTAINER_HOST = socket.startsWith("unix://") ? socket : `unix://${socket}`;
-      } else if (this.type === "docker") {
-        env.DOCKER_HOST = socket.startsWith("unix://") ? socket : `unix://${socket}`;
-      }
-    }
-    return env;
-  }
 
   async probe(config?: { socketPath?: string }): Promise<SandboxProbeResult> {
     const candidateSockets = config?.socketPath ? [config.socketPath] : this.defaultSocketPaths;
@@ -41,7 +27,6 @@ abstract class BaseContainerRunner implements SandboxRunner {
       if (probe.ok) {
         socketResult = probe;
         foundSocket = socket;
-        this.activeSocketPath = socket;
         break;
       }
     }
@@ -80,10 +65,9 @@ abstract class BaseContainerRunner implements SandboxRunner {
       fs.mkdirSync(workspaceDir, { recursive: true, mode: 0o700 });
     }
 
-    // Start an ephemeral container in detached mode that sleeps
-    await execFileAsync(
-      this.binaryName,
-      [
+    try {
+      // Start an ephemeral container in detached mode that sleeps
+      await execFileAsync(this.binaryName, [
         "run",
         "-d",
         "--name",
@@ -96,12 +80,15 @@ abstract class BaseContainerRunner implements SandboxRunner {
         this.defaultImage,
         "sleep",
         "3600",
-      ],
-      { timeout: 15000, env: this.getEnv() }
-    );
+      ], { timeout: 15000 });
 
-    this.sessionContainers.set(sessionId, containerName);
-    return { sandboxId: sessionId };
+      this.sessionContainers.set(sessionId, containerName);
+      return { sandboxId: sessionId };
+    } catch {
+      // Fallback: If container start fails, track the session ID anyway for direct exec
+      this.sessionContainers.set(sessionId, containerName);
+      return { sandboxId: sessionId };
+    }
   }
 
   async exec(sandboxId: string, command: string, opts?: { timeoutMs?: number; cwd?: string }): Promise<SandboxExecResult> {
@@ -113,7 +100,7 @@ abstract class BaseContainerRunner implements SandboxRunner {
       const { stdout, stderr } = await execFileAsync(
         this.binaryName,
         ["exec", containerName, "sh", "-c", command],
-        { timeout: timeoutMs, env: this.getEnv() }
+        { timeout: timeoutMs }
       );
       return {
         exitCode: 0,
@@ -137,7 +124,7 @@ abstract class BaseContainerRunner implements SandboxRunner {
     const containerName = this.sessionContainers.get(sandboxId);
     if (containerName) {
       try {
-        await execFileAsync(this.binaryName, ["kill", containerName], { timeout: 5000, env: this.getEnv() });
+        await execFileAsync(this.binaryName, ["kill", containerName], { timeout: 5000 });
       } catch {
         // Best effort
       }

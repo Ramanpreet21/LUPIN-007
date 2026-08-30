@@ -63,17 +63,6 @@ export async function probeCliBinary(binaryName: string): Promise<{ ok: boolean;
 export async function probeHttpUrl(url: string, token?: string, timeoutMs = 3000): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
   const t0 = Date.now();
   try {
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-    } catch {
-      return { ok: false, latencyMs: 0, error: `Invalid server URL format: ${url}` };
-    }
-
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return { ok: false, latencyMs: 0, error: `Unsupported protocol ${parsed.protocol} (must be http or https)` };
-    }
-
     const targetUrl = url.endsWith("/health") || url.endsWith("/api/v1/health") ? url : `${url.replace(/\/+$/, "")}/health`;
     const headers: Record<string, string> = {};
     if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -85,7 +74,6 @@ export async function probeHttpUrl(url: string, token?: string, timeoutMs = 3000
       method: "GET",
       headers,
       signal: controller.signal,
-      redirect: "error", // Prevent automatic redirect following
     });
     clearTimeout(timer);
     const latencyMs = Date.now() - t0;

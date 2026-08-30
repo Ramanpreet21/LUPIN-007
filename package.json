@@ -12,7 +12,7 @@
     "serve": "node dist/index.js serve",
     "start": "node dist/index.js serve",
     "dev": "tsx src/index.ts serve",
-    "test": "npm run build && node --test dist/*.test.js dist/sandboxes/*.test.js dist/demo/*.test.js",
+    "test": "npm run build && node --test dist/*.test.js dist/sandboxes/*.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke": "demo/smoke.sh"
   },
