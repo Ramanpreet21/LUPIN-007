@@ -4,7 +4,7 @@
  * dense, asymmetric instrument layout; dark frosted material; controlled ion-mint signal light;
  * razor-thin specular edges; quiet precision over decorative clutter.
  */
-import { type CSSProperties, type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AgentStatusCapabilitiesBar } from "@/components/AgentStatusCapabilitiesBar";
 import { FirstRunSetup, LUMA_SETUP_STORAGE_KEY, readLumaSetup, type FirstRunPreferences } from "@/components/FirstRunSetup";
 import { HealthSummaryCard } from "@/components/HealthSummaryCard";
@@ -168,6 +168,8 @@ export default function Home() {
   const [draft, setDraft] = useState("");
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>(() => storedSetup?.defaultApprovalMode ?? mockAgentStatus.safety.approvalMode);
   const [agentStopped, setAgentStopped] = useState(false);
+  const [models, setModels] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedModel, setSelectedModel] = useState<string>(() => mockAgentStatus.telemetry.activeModel);
   const [sshStatus, setSshStatus] = useState<SSHStatus>(() => storedSetup?.launchMode === "LIVE_HOST" ? "DISCONNECTED" : mockAgentStatus.session.sshStatus);
   const [activeTarget, setActiveTarget] = useState(() => ({ host: storedSetup?.ssh.targetHost ?? mockAgentStatus.session.hostname, port: storedSetup?.ssh.sshPort ?? 22 }));
   const [activeAgentSkillId, setActiveAgentSkillId] = useState<string | null>(mockAgentStatus.activeSkillId ?? null);
@@ -182,6 +184,54 @@ export default function Home() {
   const [selectedTopologyNodeId, setSelectedTopologyNodeId] = useState<string | null>(null);
   const [operatorNotes, setOperatorNotes] = useState<OperatorNote[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
+
+  useEffect(() => {
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/models`)
+      .then((r) => r.json())
+      .then((d: { data: Array<{ id: string; name: string }>; active?: string }) => {
+        if (Array.isArray(d?.data)) setModels(d.data);
+        if (d?.active) setSelectedModel(d.active);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleToggleApprovalMode = useCallback(async (newMode: ApprovalMode) => {
+    setApprovalMode(newMode);
+    try {
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/policy/mode`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: newMode }),
+      });
+    } catch (err) {
+      console.error("Failed to set approval mode:", err);
+      // Revert on error
+      setApprovalMode((prev) => prev === "AUTONOMOUS" ? "STRICT_GATED" : "AUTONOMOUS");
+    }
+  }, []);
+
+  const handleEmergencyStop = useCallback(async () => {
+    if (!window.confirm("Emergency stop will cancel ALL active agent sessions. Continue?")) return;
+    setAgentStopped(true);
+    try {
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/emergency-stop`, { method: "POST" });
+    } catch (err) {
+      console.error("Emergency stop failed:", err);
+    }
+  }, []);
+
+  const handleModelChange = useCallback(async (modelId: string) => {
+    setSelectedModel(modelId);
+    try {
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: modelId }),
+      });
+    } catch (err) {
+      console.error("Failed to switch model:", err);
+    }
+  }, []);
 
   const selectView = (viewId: SystemViewId) => {
     setActiveViewId(viewId);
@@ -233,8 +283,9 @@ export default function Home() {
       ),
       safety: { ...mockAgentStatus.safety, approvalMode, isExecuting: controlPlane.isExecuting && !agentStopped },
       policy: { ...mockAgentStatus.policy, blockedCommandCount: controlPlane.blockedExecutionCount },
+      telemetry: { ...mockAgentStatus.telemetry, activeModel: selectedModel },
     }),
-    [activeAgentSkillId, activeTarget, agentStopped, approvalMode, controlPlane.status, controlPlane.isExecuting, controlPlane.blockedExecutionCount],
+    [activeAgentSkillId, activeTarget, agentStopped, approvalMode, controlPlane.status, controlPlane.isExecuting, controlPlane.blockedExecutionCount, selectedModel],
   );
   const handleSshAction = (action: "RECONNECT" | "CLEAR_SCROLLBACK" | "SPAWN_SUBSHELL") => { if (action === "RECONNECT") { setSshStatus("RECONNECTING"); window.setTimeout(() => setSshStatus("CONNECTED"), 750); } };
   const addSshConnection = () => setSshConnections((current) => [...current, { id: `node-${current.length + 1}`, hostname: `node-${current.length + 1}.lan`, address: "SSH · 22", status: "DRAFT", latency: "—" }]);
@@ -399,7 +450,15 @@ export default function Home() {
               </section>
               {notchMenuOpen ? <section className={`workspace-backend-popup ${backendPopup.priority === "attention" ? "is-attention" : ""}`} aria-label="Backend action popup"><div className="workspace-popup-head"><span className="workspace-popup-indicator"><TriangleAlert size={13} /></span><div><p className="eyebrow">{backendPopup.source}</p><strong>{backendPopup.title}</strong></div></div><p>{backendPopup.detail}</p><div className="workspace-popup-actions"><button type="button" onClick={() => setBackendPopup((current) => ({ ...current, title: "Review queued", detail: "The action request has been routed to the protected review queue.", priority: "routine" }))}>Review</button><button type="button" onClick={() => setConversationMessages((current) => [...current, { id: `backend-${Date.now()}`, role: "system", label: "BACKEND", time: "NOW", content: `Action ${backendPopup.id} was added to the conversation review history.` }])}>History</button><button type="button" onClick={() => setNotchMenuOpen(false)}>Dismiss</button></div></section> : <form className="workspace-input" onSubmit={submitConversation}><button type="submit" aria-label="Send message"><Send size={16} /></button><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Ask Lupin about the active workspace…" aria-label="Ask Lupin about the active workspace" /><kbd>↵</kbd></form>}
             </section>
-            <AgentStatusCapabilitiesBar data={agentStatusData} onToggleApprovalMode={setApprovalMode} onEmergencyStop={() => setAgentStopped(true)} onSSHAction={handleSshAction} onSkillClick={setActiveAgentSkillId} />
+            <AgentStatusCapabilitiesBar
+              data={agentStatusData}
+              onToggleApprovalMode={handleToggleApprovalMode}
+              onEmergencyStop={handleEmergencyStop}
+              onSSHAction={handleSshAction}
+              onSkillClick={setActiveAgentSkillId}
+              models={models}
+              onModelChange={handleModelChange}
+            />
 
           </section>
 
