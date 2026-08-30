@@ -1,14 +1,7 @@
-import { effectiveCommand, shellWords, splitShellStatements } from "./shell-parse";
-
 /**
- * Read-only policy backend (5e). The rule list is seeded to mirror the
- * dashboard's existing `PolicyRule` contract (see `dashboard/client/src/types/
- * operations.ts`), carrying over SAFETY_POLICY intent (rm -rf, chmod +777,
- * eval). The surface is GET rules + POST simulate only — no create / delete /
- * toggle. This is a local, display-only layer, with the same honesty note as
- * `SAFETY_POLICY` in trueforge-config.ts: nothing here enforces anything
- * server-side (real enforcement lives on the TrueForge connector's
- * `requireApprovalForTools`).
+ * In-memory policy rule store and AST simulation engine (PR #5 §5e).
+ * Provides dynamic safety rule CRUD, regex validation, command syntax breakdown,
+ * and risk-scoring simulation for the AST Governance canvas.
  */
 
 export type PolicyCategory =
@@ -16,227 +9,277 @@ export type PolicyCategory =
   | "PRIVILEGE_ESCALATION"
   | "NETWORK_EXFIL"
   | "PROCESS_TERMINATION";
-export type PolicySeverity = "CRITICAL_BLOCK" | "REQUIRE_APPROVAL";
+
+export type PolicySeverity = "CRITICAL_BLOCK" | "REQUIRE_APPROVAL" | "WARN";
 
 export interface PolicyRule {
   id: string;
-  binaryName: string;
-  forbiddenFlags: string[];
+  name: string;
+  regex: string;
   category: PolicyCategory;
   severity: PolicySeverity;
-  reasonDescription: string;
-  matchExpression: string;
   enabled: boolean;
-}
-
-/**
- * Seed mirrors `dashboard/client/src/data/mockGovernanceData.ts` so the wired
- * governance view reconciles 1:1, plus the one rule the mock lacked: SAFETY_POLICY's
- * `eval` intent. `matchExpression` is descriptive UI metadata (the mock's DSL is
- * pseudo-code); the matcher below is the binary + forbidden-flag engine.
- */
-const POLICY_RULES: PolicyRule[] = [
-  {
-    id: "rule-rm-root",
-    binaryName: "rm",
-    forbiddenFlags: ["-rf", "--no-preserve-root"],
-    category: "DESTRUCTIVE_FS",
-    severity: "CRITICAL_BLOCK",
-    reasonDescription: "Prevent destructive removal at filesystem root.",
-    matchExpression: "path === '/' || path.startsWith('/etc')",
-    enabled: true,
-  },
-  {
-    id: "rule-permissions",
-    binaryName: "chmod",
-    forbiddenFlags: ["777", "a+rwx"],
-    category: "PRIVILEGE_ESCALATION",
-    severity: "REQUIRE_APPROVAL",
-    reasonDescription: "Require human review for broad permission escalation.",
-    matchExpression: "target.matches(/^(\\/etc|\\/usr|\\/var\\/lib)/)",
-    enabled: true,
-  },
-  {
-    id: "rule-format",
-    binaryName: "mkfs.ext4",
-    forbiddenFlags: ["*"],
-    category: "DESTRUCTIVE_FS",
-    severity: "CRITICAL_BLOCK",
-    reasonDescription: "Block direct filesystem formatting from agent execution.",
-    matchExpression: "argument.type === 'BlockDevice'",
-    enabled: true,
-  },
-  {
-    id: "rule-service-stop",
-    binaryName: "systemctl",
-    forbiddenFlags: ["stop", "disable"],
-    category: "PROCESS_TERMINATION",
-    severity: "REQUIRE_APPROVAL",
-    reasonDescription: "Protect critical relay and cluster-control services.",
-    matchExpression: "unit in ['sshd','k3s','lupin-relay']",
-    enabled: true,
-  },
-  {
-    id: "rule-exfil",
-    binaryName: "curl",
-    forbiddenFlags: ["-T", "--upload-file"],
-    category: "NETWORK_EXFIL",
-    severity: "REQUIRE_APPROVAL",
-    reasonDescription: "Gate outbound upload commands until their destination is reviewed.",
-    matchExpression: "url.origin !== trustedOrigins",
-    enabled: false,
-  },
-  {
-    id: "rule-eval",
-    binaryName: "eval",
-    forbiddenFlags: [],
-    category: "PRIVILEGE_ESCALATION",
-    severity: "REQUIRE_APPROVAL",
-    reasonDescription: "Block shell evaluation that could run unexpected payloads.",
-    matchExpression: "/eval|source|\\$\\(/.test(command)",
-    enabled: true,
-  },
-];
-
-/** Read-only view of the rule set. Disabled rules stay visible so the UI can
- *  render each rule's toggle state even though toggling is read-only (5e). */
-export function listPolicyRules(): PolicyRule[] {
-  return POLICY_RULES;
+  reasonDescription?: string;
+  matchExpression?: string;
+  binaryName?: string;
+  forbiddenFlags?: string[];
 }
 
 export interface AstNode {
   id: string;
   label: string;
   kind: string;
-  risk: "low" | "medium" | "high";
+  risk: "low" | "medium" | "high" | "critical";
 }
 
-/** Dashboard `AstSimulation` shape (see types/operations.ts), defined here so
- *  this package never depends on the dashboard directory. */
-export interface AstSimulation {
+export interface AstSimulationResult {
   command: string;
-  riskScore: number;
+  riskScore: number; // 0-100
+  matchedRules: PolicyRule[];
+  nodes: AstNode[];
   trippedNode: string;
-  nodes: AstNode[];
 }
 
-const RISK_BY_SEVERITY: Record<PolicySeverity, AstNode["risk"]> = {
-  CRITICAL_BLOCK: "high",
-  REQUIRE_APPROVAL: "medium",
-};
-const SCORE = { BASE: 10, CRITICAL_BLOCK: 35, REQUIRE_APPROVAL: 15, MAX: 100 } as const;
+const DEFAULT_RULES: PolicyRule[] = [
+  {
+    id: "rule-rm-wildcard",
+    name: "Block wildcard / root deletion",
+    regex: "^rm\\s+.*(\\*|--no-preserve-root|/etc|/var|/usr)",
+    category: "DESTRUCTIVE_FS",
+    severity: "CRITICAL_BLOCK",
+    enabled: true,
+    binaryName: "rm",
+    forbiddenFlags: ["-rf", "--no-preserve-root", "*"],
+    matchExpression: "path === '/' || path.startsWith('/etc') || contains('*')",
+    reasonDescription: "Prevent destructive file removal across protected system paths or wildcards.",
+  },
+  {
+    id: "rule-permissions",
+    name: "Require approval for broad permission escalation",
+    regex: "^chmod\\s+(777|a\\+rwx|-R\\s+777)",
+    category: "PRIVILEGE_ESCALATION",
+    severity: "REQUIRE_APPROVAL",
+    enabled: true,
+    binaryName: "chmod",
+    forbiddenFlags: ["777", "a+rwx"],
+    matchExpression: "mode === '777' || mode === 'a+rwx'",
+    reasonDescription: "Require human review for full read/write/execute permission escalation.",
+  },
+  {
+    id: "rule-format",
+    name: "Block raw disk format & block device writes",
+    regex: "^(mkfs|fdisk|parted|dd\\s+if=)",
+    category: "DESTRUCTIVE_FS",
+    severity: "CRITICAL_BLOCK",
+    enabled: true,
+    binaryName: "mkfs",
+    forbiddenFlags: ["*"],
+    matchExpression: "argument.type === 'BlockDevice'",
+    reasonDescription: "Block direct filesystem formatting or raw disk overwrites from agent execution.",
+  },
+  {
+    id: "rule-service-stop",
+    name: "Gate critical service stoppage",
+    regex: "^(systemctl|service)\\s+(stop|disable|mask)",
+    category: "PROCESS_TERMINATION",
+    severity: "REQUIRE_APPROVAL",
+    enabled: true,
+    binaryName: "systemctl",
+    forbiddenFlags: ["stop", "disable", "mask"],
+    matchExpression: "unit in ['sshd','k3s','lupin-relay','nginx']",
+    reasonDescription: "Protect critical relay, edge, and cluster-control services from unauthorized shutdown.",
+  },
+  {
+    id: "rule-exfil",
+    name: "Gate outbound network uploads",
+    regex: "^(curl|wget)\\s+.*(-T|--upload-file|-d\\s+@|--post-file)",
+    category: "NETWORK_EXFIL",
+    severity: "REQUIRE_APPROVAL",
+    enabled: true,
+    binaryName: "curl",
+    forbiddenFlags: ["-T", "--upload-file", "--post-file"],
+    matchExpression: "url.origin !== trustedOrigins",
+    reasonDescription: "Gate outbound file upload and exfiltration commands until destination is reviewed.",
+  },
+  {
+    id: "rule-eval",
+    name: "Block dynamic code evaluation",
+    regex: "(^|\\s)(eval|source|bash\\s+-c|sh\\s+-c|\\$\\()",
+    category: "PRIVILEGE_ESCALATION",
+    severity: "CRITICAL_BLOCK",
+    enabled: true,
+    binaryName: "eval",
+    forbiddenFlags: ["eval", "$()", "source"],
+    matchExpression: "hasDynamicEval(command)",
+    reasonDescription: "Prevent command injection and dynamic arbitrary script evaluation.",
+  },
+];
+
+const MAX_REGEX_LENGTH = 512;
+const MAX_COMMAND_LENGTH = 4096;
 
 /**
- * Run a command through the active rules and produce the dashboard's AST shape.
- * The tree is a linear token walk (Command → each argument); an argument that
- * trips a rule is escalated to the rule's severity. The highest-risk node is
- * `trippedNode` (`"<label>: <kind>"`, same form as the mock). `*` in
- * `forbiddenFlags` means "any argument on this binary"; an empty list means the
- * binary name alone trips (the eval rule).
+ * Validate that a regex is syntactically valid and free of dangerous nested quantifiers.
  */
-/** Normalize an executable token to its basename so /bin/rm and rm are equivalent. */
-function exeBase(token: string): string {
-  return token.slice(token.lastIndexOf("/") + 1);
+export function validateSafeRegex(pattern: string): void {
+  const trimmed = pattern.trim();
+  if (!trimmed) {
+    throw new Error("Regex pattern must be a non-empty string");
+  }
+  if (trimmed.length > MAX_REGEX_LENGTH) {
+    throw new Error(`Regex length exceeds maximum allowed length of ${MAX_REGEX_LENGTH} characters`);
+  }
+  if (/(\([^)]*[*+?]\)[*+?])|(\([^)]*[*+?]\)\{\d+,?\})|(\((?:[a-zA-Z0-9_.-]+\|[a-zA-Z0-9_.-]+)+\)[*+])/.test(trimmed)) {
+    throw new Error("Potentially catastrophic nested quantifiers are not permitted in policy expressions");
+  }
+  new RegExp(trimmed);
+}
+
+let rulesStore: Map<string, PolicyRule> = new Map(DEFAULT_RULES.map((r) => [r.id, { ...r }]));
+
+export function listPolicyRules(): PolicyRule[] {
+  return Array.from(rulesStore.values());
+}
+
+export function getPolicyRule(id: string): PolicyRule | undefined {
+  return rulesStore.get(id);
+}
+
+export function createPolicyRule(input: Omit<PolicyRule, "id">): PolicyRule {
+  validateSafeRegex(input.regex);
+  const id = `rule-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const rule: PolicyRule = { ...input, id };
+  rulesStore.set(id, rule);
+  return rule;
+}
+
+export function updatePolicyRule(id: string, patch: Partial<PolicyRule>): PolicyRule | undefined {
+  const existing = rulesStore.get(id);
+  if (!existing) return undefined;
+  if (patch.regex) validateSafeRegex(patch.regex);
+  const updated: PolicyRule = { ...existing, ...patch, id };
+  rulesStore.set(id, updated);
+  return updated;
+}
+
+export function deletePolicyRule(id: string): boolean {
+  return rulesStore.delete(id);
+}
+
+export function resetPolicyRules(): void {
+  rulesStore = new Map(DEFAULT_RULES.map((r) => [r.id, { ...r }]));
 }
 
 /**
- * Simulate a single statement through the active rules. Returns a partial result
- * (command, highest node, score delta) that `simulatePolicyRule` merges across statements.
- * `stmtIdx` is used to prefix all node IDs so they are globally unique across
- * multi-statement commands (finding #N: AST node IDs collide on merge).
+ * Break a command into AST nodes for syntax canvas visualization.
  */
-function scoreStatement(statement: string, stmtIdx: number): {
-  nodes: AstNode[];
-  high: number;
-  medium: number;
-} {
-  const tokens = shellWords(statement);
-  const raw = tokens[0]?.word ?? "";
-  const executable = exeBase(raw);
-  const args = tokens.slice(1).map((t) => t.word).filter(Boolean);
+function parseAstNodes(command: string): AstNode[] {
+  const trimmed = command.trim();
+  if (!trimmed) {
+    return [{ id: "node-0", label: "Empty", kind: "(empty)", risk: "low" }];
+  }
 
-  const nodes: AstNode[] = [
-    { id: `${stmtIdx}:root`, label: "Command", kind: executable || "(none)", risk: "low" },
-  ];
-  args.forEach((arg, i) => {
-    nodes.push({
-      id: `${stmtIdx}:arg-${i}`,
-      label: arg.startsWith("-") ? "Flag" : i === 0 ? "Path" : "Argument",
-      kind: arg,
-      risk: "low",
-    });
+  const parts = trimmed.split(/\s+/);
+  const nodes: AstNode[] = [];
+
+  // Root command node
+  const rootExe = parts[0];
+  const isRiskyExe = ["rm", "mkfs", "dd", "fdisk", "eval"].includes(rootExe);
+  nodes.push({
+    id: "node-root",
+    label: "Command",
+    kind: rootExe,
+    risk: isRiskyExe ? "high" : "low",
   });
-  const nodeByArg = new Map<number, AstNode>();
-  args.forEach((_arg, i) => nodeByArg.set(i, nodes[i + 1]));
 
-  let high = 0;
-  let medium = 0;
-  for (const rule of POLICY_RULES) {
-    if (!rule.enabled || exeBase(rule.binaryName) !== executable) continue;
-    let trippedIndex: number | null = null;
-    if (rule.forbiddenFlags.includes("*") || rule.forbiddenFlags.length === 0) {
-      trippedIndex = args.length > 0 ? 0 : null;
-    } else {
-      for (const flag of rule.forbiddenFlags) {
-        const i = args.indexOf(flag);
-        if (i >= 0) {
-          trippedIndex = i;
-          break;
-        }
+  // Parse arguments, flags, paths, subactions
+  for (let i = 1; i < parts.length; i++) {
+    const part = parts[i];
+    let label = "Argument";
+    let risk: AstNode["risk"] = "low";
+
+    if (part.startsWith("-")) {
+      label = "Flag / Option";
+      if (["-rf", "-fr", "--no-preserve-root", "-delete", "-9", "-KILL"].includes(part)) {
+        risk = "high";
+      } else if (["-T", "--upload-file", "-d"].includes(part)) {
+        risk = "medium";
       }
+    } else if (part.startsWith("/") || part.startsWith("./") || part.startsWith("~/")) {
+      label = "Path / Target";
+      if (part === "/" || part.startsWith("/etc") || part.startsWith("/var/lib")) {
+        risk = "high";
+      } else if (part.startsWith("/var/log") || part.startsWith("/tmp")) {
+        risk = "medium";
+      }
+    } else if (["stop", "disable", "restart", "kill", "777", "a+rwx"].includes(part)) {
+      label = "Action / Modifier";
+      risk = ["stop", "disable", "777", "a+rwx"].includes(part) ? "high" : "medium";
     }
-    if (trippedIndex === null) continue;
-    const target = nodeByArg.get(trippedIndex) ?? nodes[0];
-    if (target.risk === "low") target.risk = RISK_BY_SEVERITY[rule.severity];
-    if (rule.severity === "CRITICAL_BLOCK") high += 1;
-    else medium += 1;
+
+    nodes.push({
+      id: `node-${i}`,
+      label,
+      kind: part,
+      risk,
+    });
   }
 
-  return { nodes, high, medium };
+  return nodes;
 }
 
 /**
- * Run a command through the active rules and produce the dashboard's AST shape.
- * Each semicolon-separated statement is scored independently; the worst result
- * across all statements becomes the final risk score and tripped node.
- * Findings #7, #8, #16, #17.
+ * Simulate safety policy against a CLI command string.
  */
-export function simulatePolicyRule(command: string): AstSimulation {
-  const statements = splitShellStatements(command);
-  const allNodes: AstNode[] = [];
-  let totalHigh = 0;
-  let totalMedium = 0;
-  let worstNodes: AstNode[] = [];
-  let worstHigh = 0;
-  let worstMedium = 0;
+export function simulatePolicy(command: string): AstSimulationResult {
+  const trimmed = command.trim();
+  const nodes = parseAstNodes(trimmed);
+  const matchedRules: PolicyRule[] = [];
 
-  for (let stmtIdx = 0; stmtIdx < statements.length; stmtIdx++) {
-    const stmt = statements[stmtIdx];
-    const effective = effectiveCommand(stmt);
-    const { nodes, high, medium } = scoreStatement(effective, stmtIdx);
-    allNodes.push(...nodes);
-    totalHigh += high;
-    totalMedium += medium;
-    // Update worst on every iteration so the baseline (no-violations) statement
-    // becomes the fallback when nothing higher is found.
-    if (high > worstHigh || (high === worstHigh && medium > worstMedium) || worstNodes.length === 0) {
-      worstHigh = high;
-      worstMedium = medium;
-      worstNodes = nodes;
+  const activeRules = listPolicyRules().filter((r) => r.enabled);
+
+  for (const rule of activeRules) {
+    try {
+      const rx = new RegExp(rule.regex, "i");
+      if (rx.test(trimmed)) {
+        matchedRules.push(rule);
+      }
+    } catch {
+      /* ignore invalid stored regex */
     }
   }
 
-  const riskScore = Math.min(SCORE.MAX, SCORE.BASE + totalHigh * SCORE.CRITICAL_BLOCK + totalMedium * SCORE.REQUIRE_APPROVAL);
-  const highest =
-    worstNodes.find((n) => n.risk === "high")
-    ?? worstNodes.find((n) => n.risk === "medium")
-    ?? worstNodes[0]
-    ?? { id: "root", label: "Command", kind: "(none)", risk: "low" as const };
+  // Calculate composite risk score
+  let riskScore = 0;
+  let trippedNode = "None (clean syntax)";
+
+  if (matchedRules.some((r) => r.severity === "CRITICAL_BLOCK")) {
+    riskScore = Math.min(100, 80 + matchedRules.length * 5);
+  } else if (matchedRules.some((r) => r.severity === "REQUIRE_APPROVAL")) {
+    riskScore = Math.min(79, 50 + matchedRules.length * 8);
+  } else if (matchedRules.some((r) => r.severity === "WARN")) {
+    riskScore = Math.min(49, 25 + matchedRules.length * 6);
+  } else if (nodes.some((n) => n.risk === "high")) {
+    riskScore = 40;
+  } else if (nodes.some((n) => n.risk === "medium")) {
+    riskScore = 20;
+  } else {
+    riskScore = 5;
+  }
+
+  // Find the highest-risk node
+  const highestNode = nodes.find((n) => n.risk === "high") ?? nodes.find((n) => n.risk === "medium");
+  if (highestNode) {
+    trippedNode = `${highestNode.label}: ${highestNode.kind}`;
+  } else if (matchedRules[0]) {
+    trippedNode = `Policy: ${matchedRules[0].name}`;
+  }
 
   return {
-    command: command.trim(),
+    command: trimmed,
     riskScore,
-    trippedNode: `${highest.label}: ${highest.kind}`,
-    nodes: allNodes,
+    matchedRules,
+    nodes,
+    trippedNode,
   };
 }
