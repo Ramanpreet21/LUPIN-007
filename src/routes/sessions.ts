@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from "express";
 import type { Logger } from "../logger";
 import { getDb } from "../db";
 import type { TrueForgeHandle } from "../trueforge";
-import { INCIDENT_RESPONDER_PROMPT } from "../trueforge-config";
+import { CONVERSATIONAL_ASSISTANT_PROMPT } from "../trueforge-config";
 
 export interface SessionsRouterOptions {
   getTf?: () => TrueForgeHandle;
@@ -61,7 +61,7 @@ export function createSessionsRouter(opts?: SessionsRouterOptions): Router {
           agent: {
             spec: {
               model: { name: activeModel },
-              instructions: INCIDENT_RESPONDER_PROMPT,
+              instructions: CONVERSATIONAL_ASSISTANT_PROMPT,
               config: { sandbox: { enabled: false } },
             },
           },
