@@ -484,7 +484,14 @@ export default function Home() {
         }
       })
       .catch(() => {});
-  }, []);
+    fetchFleetHosts();
+  }, [fetchFleetHosts]);
+
+  useEffect(() => {
+    const handleFleetUpdated = () => fetchFleetHosts();
+    window.addEventListener("fleet_updated", handleFleetUpdated);
+    return () => window.removeEventListener("fleet_updated", handleFleetUpdated);
+  }, [fetchFleetHosts]);
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
