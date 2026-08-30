@@ -376,6 +376,46 @@ export default function Home() {
     });
   }, [allModels, configuredProviders]);
 
+  const availableTargets = useMemo(() => {
+    const list: Array<{ id: string; hostname: string; port: number | string }> = [];
+    if (activeTarget.host) {
+      list.push({ id: "active", hostname: activeTarget.host, port: activeTarget.port });
+    }
+    if (storedSetup?.ssh?.targetHost && storedSetup.ssh.targetHost !== activeTarget.host) {
+      list.push({ id: "setup", hostname: storedSetup.ssh.targetHost, port: storedSetup.ssh.sshPort ?? 22 });
+    }
+    if (Array.isArray(fleetHosts)) {
+      for (const fh of fleetHosts as Array<{ id?: string; hostname?: string; port?: number }>) {
+        if (fh?.hostname && !list.some((t) => t.hostname === fh.hostname && String(t.port) === String(fh.port ?? 22))) {
+          list.push({ id: fh.id || fh.hostname, hostname: fh.hostname, port: fh.port ?? 22 });
+        }
+      }
+    }
+    if (Array.isArray(sshConnections)) {
+      for (const conn of sshConnections) {
+        const port = Number(conn.address.replace(/[^0-9]/g, "")) || 22;
+        if (conn?.hostname && !list.some((t) => t.hostname === conn.hostname && String(t.port) === String(port))) {
+          list.push({ id: conn.id, hostname: conn.hostname, port });
+        }
+      }
+    }
+    return list;
+  }, [activeTarget, storedSetup, fleetHosts, sshConnections]);
+
+  const handleTargetChange = useCallback((target: { host: string; port: number }) => {
+    setActiveTarget(target);
+    setConversationMessages((current) => [
+      ...current,
+      {
+        id: `sys-${Date.now()}`,
+        role: "system",
+        label: "SYSTEM",
+        time: "NOW",
+        content: `Target SSH connection switched to: ${target.host} (SSH · ${target.port}).`,
+      },
+    ]);
+  }, []);
+
   const handleSaveProviderKey = async () => {
     if (!selectedProvider) return;
     const newConfigured = Array.from(new Set([...configuredProviders, selectedProvider]));
@@ -1080,6 +1120,8 @@ export default function Home() {
               onSkillClick={setActiveAgentSkillId}
               models={visibleModels}
               onModelChange={handleModelChange}
+              targets={availableTargets}
+              onTargetChange={handleTargetChange}
             />
 
           </section>
