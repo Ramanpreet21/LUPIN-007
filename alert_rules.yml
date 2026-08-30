@@ -1,0 +1,93 @@
+groups:
+  - name: infrastructure_alerts
+    interval: 30s
+    rules:
+      - alert: HighCPUUsage
+        expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High CPU usage detected"
+          description: "Instance {{ $labels.instance }} CPU usage is {{ $value }}%"
+
+      - alert: DiskSpaceCritical
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk space critical"
+          description: "Disk usage on {{ $labels.instance }} is {{ $value }}%"
+
+      - alert: DiskSpaceWarning
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 20
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk space running low"
+          description: "Disk usage on {{ $labels.instance }} is {{ $value }}%"
+
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 < 20
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Memory pressure"
+          description: "Available memory on {{ $labels.instance }} is {{ $value }}%"
+
+      - alert: NginxDown
+        expr: up{job="nginx"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Nginx is down"
+          description: "Nginx on {{ $labels.instance }} is not responding"
+
+      - alert: SSLCertExpiring
+        expr: probe_ssl_certificate_expiry_seconds{job="blackbox-http"} < 86400 * 7
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SSL certificate expiring soon"
+          description: "SSL cert on {{ $labels.instance }} expires in {{ $value }} seconds"
+
+      - alert: MySQLDown
+        expr: up{job="mysqld"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MySQL is down"
+          description: "MySQL on {{ $labels.instance }} is not responding"
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis is down"
+          description: "Redis on {{ $labels.instance }} is not responding"
+
+      - alert: LoadAverageHigh
+        expr: node_load1 > 4
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High system load"
+          description: "Load average on {{ $labels.instance }} is {{ $value }}"
+
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service is down"
+          description: "{{ $labels.job }} on {{ $labels.instance }} is not responding"

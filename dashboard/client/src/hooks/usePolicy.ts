@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { mockGovernanceData } from "@/data/mockGovernanceData";
 import type { AstSimulation, PolicyRule } from "@/types/operations";
 
 /** Control-plane origin (mirrors the same env override in useControlPlane). */
@@ -27,7 +26,7 @@ export function usePolicy(): {
   loadedFromPlane: boolean;
   simulate: (command: string) => Promise<AstSimulation>;
 } {
-  const [rules, setRules] = useState<PolicyRule[]>(mockGovernanceData);
+  const [rules, setRules] = useState<PolicyRule[]>([]);
   const [loadedFromPlane, setLoadedFromPlane] = useState(false);
   /** Prevents a slow earlier response from overwriting a faster later one. */
   const [seq, setSeq] = useState(0);

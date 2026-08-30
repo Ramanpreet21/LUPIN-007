@@ -8,8 +8,10 @@ const contextTone = (used: number, max: number) => { const percentage = max === 
 export function AgentStatusCapabilitiesBar({ data, onToggleApprovalMode, onEmergencyStop, onSSHAction, onSkillClick, hasApiKey, onOpenSettings, className = "", models, onModelChange, targets, onTargetChange }: AgentStatusCapabilitiesBarProps) {
   const usage = data.telemetry.maxTokens === 0 ? 0 : Math.min(data.telemetry.tokensUsed / data.telemetry.maxTokens * 100, 100);
   const tone = contextTone(data.telemetry.tokensUsed, data.telemetry.maxTokens);
-  const activePort = data.session.targetIp.replace(/[^0-9]/g, "") || "22";
-  const activeKey = `${data.session.hostname}:${activePort}`;
+  const selectedTarget = targets?.find(
+    (t) => t.hostname === data.session.hostname && (data.session.targetIp.includes(String(t.port)) || !data.session.targetIp)
+  ) ?? targets?.find((t) => t.hostname === data.session.hostname) ?? targets?.[0];
+  const activeTargetId = selectedTarget?.id ?? "";
 
   return <article className={`cutout-card agent-status-bar glass-surface ${className}`.trim()} aria-label="Agent status and capabilities">
     <header className="agent-bar-header">
@@ -48,16 +50,18 @@ export function AgentStatusCapabilitiesBar({ data, onToggleApprovalMode, onEmerg
       <span className={`agent-ssh-dot agent-ssh-dot--${data.session.sshStatus.toLowerCase()}`} />
       {targets && targets.length > 0 && onTargetChange ? (
         <select
-          value={activeKey}
+          value={activeTargetId}
           onChange={(e) => {
-            const [h, p] = e.target.value.split(":");
-            onTargetChange({ host: h, port: Number(p) || 22 });
+            const selected = targets.find((t) => t.id === e.target.value);
+            if (selected) {
+              onTargetChange({ host: selected.hostname, port: Number(selected.port) || 22 });
+            }
           }}
           aria-label="Change target SSH connection"
           className="bg-transparent border border-white/10 rounded px-1.5 py-0.5 text-xs text-white/90 font-medium hover:border-white/30 focus:outline-none cursor-pointer"
         >
           {targets.map((t) => (
-            <option key={`${t.hostname}:${t.port}`} value={`${t.hostname}:${t.port}`} className="bg-neutral-900 text-white">
+            <option key={t.id} value={t.id} className="bg-neutral-900 text-white">
               {t.hostname} · SSH {t.port}
             </option>
           ))}

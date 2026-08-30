@@ -191,7 +191,10 @@ describe("sessions routes", () => {
       const alertBody = (await alertRes.json()) as { incident_id: string };
 
       // Allow async diagnosis turn stream to complete
-      await new Promise((r) => setTimeout(r, 100));
+      for (let i = 0; i < 40; i++) {
+        if (broadcasts.some((b: any) => b.type === "session_created")) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
 
       const sessionCreatedBroadcast = broadcasts.find(
         (b: any) => b.type === "session_created"
