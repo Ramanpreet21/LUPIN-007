@@ -188,7 +188,7 @@ export function FirstRunSetup({
       .catch(() => {});
   }, []);
 
-  const finishSetup = (submitted: FirstRunFormState = form) => {
+  const finishSetup = async (submitted: FirstRunFormState = form) => {
     const completedPreferences: FirstRunPreferences = { ...submitted, completedAt: new Date().toISOString() };
     const { modelKeys: _modelKeys, ...persistedPreferences } = completedPreferences;
     try {
@@ -197,29 +197,33 @@ export function FirstRunSetup({
       // Storage availability should not block local dashboard use.
     }
 
-    void fetch(`${API}/api/settings`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: completedPreferences.modelKeys.localLlmEndpoint ?? "",
-        operator_name: completedPreferences.operatorLabel,
-        enforcement_mode: completedPreferences.defaultApprovalMode,
-        sandbox_url: completedPreferences.sandboxUrl ?? "",
-      }),
-    }).catch(() => {});
-
-    // Register the SSH host if live mode
-    if (completedPreferences.launchMode === "LIVE_HOST" && completedPreferences.ssh.targetHost) {
-      void fetch(`${API}/api/fleet/hosts`, {
-        method: "POST",
+    try {
+      await fetch(`${API}/api/settings`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          hostname: completedPreferences.ssh.targetHost,
-          port: completedPreferences.ssh.sshPort,
-          ssh_user: completedPreferences.ssh.userKeyPath?.split("@")[0] ?? "",
-          ssh_key_path: completedPreferences.ssh.userKeyPath,
+          model: completedPreferences.modelKeys.localLlmEndpoint ?? "",
+          operator_name: completedPreferences.operatorLabel,
+          enforcement_mode: completedPreferences.defaultApprovalMode,
+          sandbox_url: completedPreferences.sandboxUrl ?? "",
         }),
-      }).catch(() => {});
+      });
+
+      // Register the SSH host if live mode
+      if (completedPreferences.launchMode === "LIVE_HOST" && completedPreferences.ssh.targetHost) {
+        await fetch(`${API}/api/fleet/hosts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            hostname: completedPreferences.ssh.targetHost,
+            port: completedPreferences.ssh.sshPort,
+            ssh_user: completedPreferences.ssh.userKeyPath?.split("@")[0] ?? "",
+            ssh_key_path: completedPreferences.ssh.userKeyPath,
+          }),
+        });
+      }
+    } catch {
+      // Non-fatal if offline
     }
 
     onComplete(completedPreferences);
@@ -227,7 +231,7 @@ export function FirstRunSetup({
 
   const launchDemo = () => {
     setForm(demoFormState);
-    finishSetup(demoFormState);
+    void finishSetup(demoFormState);
   };
 
   const testConnection = async () => {
