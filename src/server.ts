@@ -6,6 +6,9 @@ import type { Logger } from "./logger";
 import type { TrueForgeStatus } from "./trueforge";
 import { getIncidentStats } from "./incidents";
 
+import { createMcpRouter } from "./mcp-provider";
+import { createPolicyRouter } from "./routes/policy";
+
 export interface ServerOptions {
   host: string;
   port: number;
@@ -75,6 +78,11 @@ export function startServer(opts: ServerOptions): Promise<ServerHandle> {
   });
 
   opts.registerRoutes?.(app, { broadcast });
+
+  // Local read-only MCP tool provider (5b): same origin, separate path, no auth
+  // (loopback binding is the default envelope, like the rest of the control plane).
+  app.use(createMcpRouter());
+  app.use(createPolicyRouter());
 
   app.use((_req: Request, res: Response) => {
     res.status(404).json({ error: "not_found" });

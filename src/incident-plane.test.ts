@@ -360,6 +360,14 @@ test("alert → reasoning → approval gate → approve → execution_complete s
       pending.payload.safety_badges.some((b: { status: string }) => b.status === "fail"),
     );
 
+    // 5d: the operator sees a per-command blast-radius scope, not just a diff line.
+    const scope = pending.payload.scope as Array<{ command: string; executable: string; risk: "low" | "high"; unknown: boolean }>;
+    assert.ok(Array.isArray(scope) && scope.length >= 1);
+    assert.equal(scope[0].command, "rm -rf /var/log/postgresql/*");
+    assert.equal(scope[0].executable, "rm");
+    assert.equal(scope[0].risk, "high");
+    assert.equal(scope[0].unknown, true, "rm is unmapped — the scope flags it for review");
+
     const approve = await postJson(
       `http://127.0.0.1:${server.port}/api/approvals`,
       JSON.stringify({ incident_id, decision: "approved" }),
@@ -653,6 +661,13 @@ test("multi-call approval gate resumes every gated tool call", async () => {
     assert.ok(diff.includes("+ db2cli status"));
     assert.ok(diff.includes("+ rm -rf /tmp/*"));
 
+    // 5d: the scope is one entry per proposed command, annotated for blast radius.
+    const scope = pending.payload.scope as Array<{ command: string; executable: string; risk: "low" | "high"; unknown: boolean }>;
+    assert.equal(scope.length, 2);
+    assert.deepEqual(scope.map((s) => s.command), ["db2cli status", "rm -rf /tmp/*"]);
+    assert.equal(scope[1].risk, "high", "rm -rf is high-risk even as the second call");
+    assert.equal(scope[1].unknown, true, "rm is unmapped — the operator still sees it annotated");
+
     const approve = await postJson(
       `http://127.0.0.1:${server.port}/api/approvals`,
       JSON.stringify({ incident_id, decision: "approved" }),
@@ -722,6 +737,7 @@ test("session creation enables the sandbox with the configured model FQN", async
           model: { name: string };
           instructions: string;
           config: { sandbox: { enabled: boolean } };
+          mcpServers: Array<{ name: string; enableTools: string[]; requireApprovalForTools: string[] }>;
         };
       };
     };
@@ -731,6 +747,14 @@ test("session creation enables the sandbox with the configured model FQN", async
     assert.equal(request.agent.spec.model.name, "anthropic/claude-sonnet-5");
     // The responder prompt rides as system instructions, not a user message (qodo #6).
     assert.ok(request.agent.spec.instructions.includes("expert Site Reliability Engineer"));
+
+    // 5b: the session carries the local read-only MCP connector with derived selectors:
+    // explicit enableTools (the provider's literal tool names) and the SDK's
+    // write/destructive approval groups — a future write tool halts for approval.
+    assert.equal(request.agent.spec.mcpServers[0].name, "incident-deck-mcp");
+    assert.ok(request.agent.spec.mcpServers[0].enableTools.includes("system_snapshot"));
+    assert.ok(request.agent.spec.mcpServers[0].enableTools.includes("dns_lookup"));
+    assert.deepEqual(request.agent.spec.mcpServers[0].requireApprovalForTools, ["@write", "@destructive"]);
   } finally {
     ws.close();
     await server.close();
