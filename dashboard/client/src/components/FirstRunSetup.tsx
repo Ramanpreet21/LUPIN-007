@@ -53,6 +53,7 @@ export interface FirstRunPreferences {
   ssh: SSHConfig;
   modelKeys: ModelKeysConfig;
   notifications: NotificationPreferences;
+  sandboxProvider?: string;
   sandboxUrl?: string;
   completedAt: string;
 }
@@ -80,6 +81,14 @@ const steps = [
   { id: "target", label: "Live host", icon: Computer },
   { id: "safeguards", label: "Safeguards", icon: LockKeyhole },
 ] as const;
+
+const DEFAULT_SANDBOX_PROVIDERS = [
+  { id: "daytona", name: "Daytona Cloud (TrueForge Default)", description: "Isolated execution microVMs with snapshot support" },
+  { id: "daytona-custom", name: "Daytona Dedicated / Self-Hosted", description: "Private enterprise Daytona server instance" },
+  { id: "podman", name: "Local Podman Container", description: "Rootless local Podman container runtime" },
+  { id: "docker", name: "Local Docker Container", description: "Host Docker daemon socket" },
+  { id: "isolated-local", name: "Simulated Isolated Host Process", description: "Protected local process execution" },
+];
 
 const DEFAULT_MODELS = [
   { id: "google-gemini/gemini-3-6-flash", name: "Gemini 3.6 Flash", provider: "Google Gemini" },
@@ -118,6 +127,7 @@ const defaultFormState: FirstRunFormState = {
   ssh: { targetHost: "192.168.1.104", sshPort: 22, userKeyPath: "~/.ssh/id_rsa" },
   modelKeys: { apiKey: "", localLlmEndpoint: "google-gemini/gemini-3-6-flash", baseUrl: "http://localhost:11434" },
   notifications: { enableDesktopAlerts: true, enableSoundAlerts: false },
+  sandboxProvider: "daytona",
   sandboxUrl: "",
 };
 
@@ -127,6 +137,7 @@ const demoFormState: FirstRunFormState = {
   launchMode: "DEMO_MOCK",
   ssh: { targetHost: "localhost", sshPort: 22, userKeyPath: "~/.ssh/id_rsa" },
   modelKeys: { apiKey: "", localLlmEndpoint: "google-gemini/gemini-3-6-flash", baseUrl: "http://localhost:11434" },
+  sandboxProvider: "daytona",
   sandboxUrl: "",
 };
 
@@ -344,7 +355,85 @@ export function FirstRunSetup({
               <div className="setup-test-row"><button type="button" className="setup-test-button" onClick={() => void testConnection()} disabled={connectionCheck.state === "testing"}>{connectionCheck.state === "testing" ? "Testing connection…" : "Test connection"}</button>{connectionCheck.state !== "idle" && <span className={`setup-test-result is-${connectionCheck.state}`} aria-live="polite">{connectionCheck.message}</span>}</div>
               <section className="setup-model-keys" aria-label="Model configuration"><button type="button" className="setup-model-keys-trigger" onClick={() => setModelsExpanded((value) => !value)} aria-expanded={modelsExpanded}><span><KeyRound size={15} /><strong>Model configuration</strong><small>Optional local session configuration</small></span><ChevronDown size={15} /></button>{modelsExpanded && <div className="setup-model-keys-body"><label className="setup-field"><span>API key</span><span className="setup-secret-field"><input type={apiKeyVisible ? "text" : "password"} value={form.modelKeys.apiKey} onChange={(event) => updateModelKey("apiKey", event.target.value)} autoComplete="off" /><button type="button" onClick={() => setApiKeyVisible((value) => !value)} aria-label={apiKeyVisible ? "Hide API key" : "Show API key"}>{apiKeyVisible ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label><label className="setup-field"><span>LLM model</span><select value={form.modelKeys.localLlmEndpoint ?? ""} onChange={(e) => updateModelKey("localLlmEndpoint", e.target.value)} className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white/90"><option value="">Select model…</option>{models.map((m) => (<option key={m.id} value={m.id}>{m.name} ({m.provider})</option>))}</select></label>{form.modelKeys.localLlmEndpoint === "local" && (<label className="setup-field"><span>Base URL</span><input value={form.modelKeys.baseUrl ?? ""} onChange={(event) => updateModelKey("baseUrl", event.target.value)} placeholder="http://localhost:11434" autoComplete="off" /></label>)}<p className="setup-security-note"><LockKeyhole size={14} /><span><strong>Security note</strong> The API key remains in this tab's memory only and is excluded from local storage and telemetry.</span></p></div>}</section>
 
-              <section className="setup-model-keys" aria-label="Sandbox provider"><button type="button" className="setup-model-keys-trigger" onClick={() => setSandboxExpanded((value) => !value)} aria-expanded={sandboxExpanded}><span><Box size={15} /><strong>Sandbox provider</strong><small>Optional Daytona sandbox for protected execution</small></span><ChevronDown size={15} /></button>{sandboxExpanded && <div className="setup-model-keys-body"><div className="space-y-2"><label className="text-xs text-white/50 uppercase tracking-wider">Sandbox URL (Daytona)</label><input type="url" placeholder="https://sandbox.example.com" value={form.sandboxUrl ?? ""} onChange={(e) => update("sandboxUrl", e.target.value)} className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white/90" /></div><label className="setup-field"><span>Daytona API key</span><span className="setup-secret-field"><input type={sandboxVisible ? "text" : "password"} value={sandboxKey} onChange={(event) => setSandboxKey(event.target.value)} autoComplete="off" placeholder="daytona_…" /><button type="button" onClick={() => setSandboxVisible((value) => !value)} aria-label={sandboxVisible ? "Hide Daytona API key" : "Show Daytona API key"}>{sandboxVisible ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label><div className="setup-test-row"><button type="button" className="setup-test-button" onClick={() => void saveSandbox()} disabled={sandboxCheck.state === "testing"}>{sandboxCheck.state === "testing" ? "Configuring…" : "Save sandbox key"}</button>{sandboxCheck.state !== "idle" && <span className={`setup-test-result is-${sandboxCheck.state}`} aria-live="polite">{sandboxCheck.message}</span>}</div><p className="setup-security-note"><LockKeyhole size={14} /><span><strong>Security note</strong> The key is sent only to your local control plane and stored there for the operator session.</span></p></div>}</section>
+              <section className="setup-model-keys" aria-label="Sandbox provider">
+                <button type="button" className="setup-model-keys-trigger" onClick={() => setSandboxExpanded((value) => !value)} aria-expanded={sandboxExpanded}>
+                  <span><Box size={15} /><strong>Sandbox execution twin</strong><small>TrueForge container / microVM isolation</small></span>
+                  <ChevronDown size={15} />
+                </button>
+                {sandboxExpanded && (
+                  <div className="setup-model-keys-body">
+                    <label className="setup-field">
+                      <span>Sandbox provider</span>
+                      <select
+                        value={form.sandboxProvider ?? "daytona"}
+                        onChange={(e) => update("sandboxProvider", e.target.value)}
+                        className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white/90"
+                      >
+                        {DEFAULT_SANDBOX_PROVIDERS.map((p) => (
+                          <option key={p.id} value={p.id} className="bg-neutral-900 text-white">
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    {(form.sandboxProvider === "daytona" || form.sandboxProvider === "daytona-custom" || !form.sandboxProvider) && (
+                      <>
+                        <label className="setup-field">
+                          <span>Daytona API key</span>
+                          <span className="setup-secret-field">
+                            <input
+                              type={sandboxVisible ? "text" : "password"}
+                              value={sandboxKey}
+                              onChange={(event) => setSandboxKey(event.target.value)}
+                              autoComplete="off"
+                              placeholder="daytona_…"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setSandboxVisible((value) => !value)}
+                              aria-label={sandboxVisible ? "Hide Daytona API key" : "Show Daytona API key"}
+                            >
+                              {sandboxVisible ? <EyeOff size={15} /> : <Eye size={15} />}
+                            </button>
+                          </span>
+                        </label>
+                        <div className="space-y-2">
+                          <label className="text-xs text-white/50 uppercase tracking-wider">Sandbox URL (Daytona Server)</label>
+                          <input
+                            type="url"
+                            placeholder="https://app.daytona.io (or private URL)"
+                            value={form.sandboxUrl ?? ""}
+                            onChange={(e) => update("sandboxUrl", e.target.value)}
+                            className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white/90"
+                          />
+                        </div>
+                      </>
+                    )}
+
+                    {(form.sandboxProvider === "podman" || form.sandboxProvider === "docker") && (
+                      <div className="space-y-2">
+                        <label className="text-xs text-white/50 uppercase tracking-wider">Container Socket Path</label>
+                        <input
+                          type="text"
+                          placeholder={form.sandboxProvider === "podman" ? "/run/user/1000/podman/podman.sock" : "/var/run/docker.sock"}
+                          value={form.sandboxUrl ?? ""}
+                          onChange={(e) => update("sandboxUrl", e.target.value)}
+                          className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white/90"
+                        />
+                      </div>
+                    )}
+
+                    <div className="setup-test-row">
+                      <button type="button" className="setup-test-button" onClick={() => void saveSandbox()} disabled={sandboxCheck.state === "testing"}>
+                        {sandboxCheck.state === "testing" ? "Configuring…" : "Save sandbox key"}
+                      </button>
+                      {sandboxCheck.state !== "idle" && <span className={`setup-test-result is-${sandboxCheck.state}`} aria-live="polite">{sandboxCheck.message}</span>}
+                    </div>
+                    <p className="setup-security-note"><LockKeyhole size={14} /><span><strong>Security note</strong> Sandbox credentials are sent securely to your local TrueForge control plane.</span></p>
+                  </div>
+                )}
+              </section>
             </section>}
 
             {step === 2 && <section className="setup-step-panel" aria-labelledby="setup-safeguards-title">

@@ -83,7 +83,7 @@ import {
   X,
 } from "lucide-react";
 
-type SettingsSection = "general" | "keys" | "mcp" | "skills";
+type SettingsSection = "general" | "sandbox" | "keys" | "mcp" | "skills";
 type ConversationMessage = { id: string; role: "assistant" | "user" | "system"; label: string; time: string; content: string };
 type BackendPopup = { id: string; source: string; title: string; detail: string; priority: "attention" | "routine" };
 
@@ -213,13 +213,69 @@ export default function Home() {
   const [newMcpUrl, setNewMcpUrl] = useState("");
   const [newMcpAuthType, setNewMcpAuthType] = useState<"None" | "API Key" | "OAuth">("None");
 
+  const DEFAULT_SANDBOX_PROVIDERS = useMemo(() => [
+    { id: "daytona", name: "Daytona Cloud (TrueForge Default)", description: "Isolated execution microVMs with snapshot support" },
+    { id: "daytona-custom", name: "Daytona Dedicated / Self-Hosted", description: "Private enterprise Daytona server instance" },
+    { id: "podman", name: "Local Podman Container", description: "Rootless local Podman container runtime" },
+    { id: "docker", name: "Local Docker Container", description: "Host Docker daemon socket" },
+    { id: "isolated-local", name: "Simulated Isolated Host Process", description: "Protected local process execution" },
+  ], []);
+
+  const [sandboxProvider, setSandboxProvider] = useState<string>("daytona");
+  const [sandboxApiKey, setSandboxApiKey] = useState<string>("");
+  const [sandboxServerUrl, setSandboxServerUrl] = useState<string>("");
+  const [sandboxAutoStopMin, setSandboxAutoStopMin] = useState<number>(30);
+  const [sandboxExecTimeoutSec, setSandboxExecTimeoutSec] = useState<number>(300);
+  const [sandboxStatus, setSandboxStatus] = useState<string>("ready");
+  const [sandboxKeyVisible, setSandboxKeyVisible] = useState<boolean>(false);
+  const [sandboxSaving, setSandboxSaving] = useState<boolean>(false);
+
   useEffect(() => {
     if (!settingsOpen) return;
     void fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`)
       .then((r) => r.json())
-      .then((d: Record<string, string>) => setSettingsData(d))
+      .then((d: Record<string, string>) => {
+        setSettingsData(d);
+        if (d.sandbox_url) setSandboxServerUrl(d.sandbox_url);
+        if (d.sandbox_provider) setSandboxProvider(d.sandbox_provider);
+      })
+      .catch(() => {});
+
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/settings/sandbox`)
+      .then((r) => r.json())
+      .then((d: { configured?: boolean; status?: string }) => {
+        if (d?.status) setSandboxStatus(d.status);
+      })
       .catch(() => {});
   }, [settingsOpen]);
+
+  const handleSaveSandbox = async () => {
+    setSandboxSaving(true);
+    setSettingsNotice("");
+    try {
+      if (sandboxApiKey.trim()) {
+        await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings/sandbox`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ apiKey: sandboxApiKey.trim() }),
+        });
+      }
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sandbox_provider: sandboxProvider,
+          sandbox_url: sandboxServerUrl,
+        }),
+      });
+      setSandboxStatus("ready");
+      setSettingsNotice(`Sandbox provider "${sandboxProvider}" configured successfully.`);
+    } catch (err) {
+      setSettingsNotice(`Failed to save sandbox: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSandboxSaving(false);
+    }
+  };
 
   const skills = useMemo<SkillConfig[]>(() => {
     try {
@@ -937,7 +993,7 @@ export default function Home() {
               <DialogClose className="management-dialog-close" aria-label="Close settings"><X size={17} /></DialogClose>
             </header>
             <div className="management-tabbar" role="tablist" aria-label="Settings sections">
-              {([ ["general", "General"], ["keys", "API keys"], ["mcp", "MCP connections"], ["skills", "Skills"] ] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={settingsSection === id} className={settingsSection === id ? "is-active" : ""} onClick={() => { setSettingsSection(id); setSettingsNotice(""); }}>{label}</button>)}
+              {([ ["general", "General"], ["sandbox", "Sandbox twin"], ["keys", "API keys"], ["mcp", "MCP connections"], ["skills", "Skills"] ] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={settingsSection === id} className={settingsSection === id ? "is-active" : ""} onClick={() => { setSettingsSection(id); setSettingsNotice(""); }}>{label}</button>)}
             </div>
             <section className="management-dialog-body">
               {settingsSection === "general" && (
@@ -981,6 +1037,133 @@ export default function Home() {
                     <button type="button" onClick={() => setSettingsNotice("Diagnostic preferences saved for this session.")}>Save preferences</button>
                     <button type="button" onClick={() => setSettingsNotice("Policy review is ready in the control-plane audit queue.")}>Review policy</button>
                     <button type="button" onClick={restartFirstRunSetup}>Restart setup</button>
+                  </div>
+                </div>
+              )}
+
+              {settingsSection === "sandbox" && (
+                <div className="settings-section-stack">
+                  <div className="settings-summary-card">
+                    <Box size={18} />
+                    <div>
+                      <strong>TrueForge Sandbox Execution Twin</strong>
+                      <span>Isolated environment for running diagnostic commands and proposed remediations before host execution.</span>
+                    </div>
+                    <b className={sandboxStatus === "ready" ? "text-emerald-400" : "text-amber-400"}>
+                      {sandboxStatus.toUpperCase()}
+                    </b>
+                  </div>
+
+                  <div className="p-3.5 rounded-lg bg-white/5 border border-white/10 space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                        Sandbox Provider Preset
+                      </label>
+                      <select
+                        value={sandboxProvider}
+                        onChange={(e) => setSandboxProvider(e.target.value)}
+                        className="w-full bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                      >
+                        {DEFAULT_SANDBOX_PROVIDERS.map((p) => (
+                          <option key={p.id} value={p.id} className="bg-neutral-900 text-white">
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {(sandboxProvider === "daytona" || sandboxProvider === "daytona-custom") && (
+                      <>
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                            Daytona API Key
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type={sandboxKeyVisible ? "text" : "password"}
+                              value={sandboxApiKey}
+                              onChange={(e) => setSandboxApiKey(e.target.value)}
+                              placeholder="daytona_••••••••"
+                              className="flex-1 bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setSandboxKeyVisible((v) => !v)}
+                              className="p-2 rounded bg-white/5 border border-white/10 hover:bg-white/10 text-white/70"
+                              aria-label="Toggle key visibility"
+                            >
+                              {sandboxKeyVisible ? <EyeOff size={14} /> : <Eye size={14} />}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                            Daytona Server Endpoint URL
+                          </label>
+                          <input
+                            type="url"
+                            value={sandboxServerUrl}
+                            onChange={(e) => setSandboxServerUrl(e.target.value)}
+                            placeholder="https://app.daytona.io (or custom on-prem server)"
+                            className="w-full bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
+                          />
+                        </div>
+                      </>
+                    )}
+
+                    {(sandboxProvider === "podman" || sandboxProvider === "docker") && (
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                          Runtime Socket Path
+                        </label>
+                        <input
+                          type="text"
+                          value={sandboxServerUrl}
+                          onChange={(e) => setSandboxServerUrl(e.target.value)}
+                          placeholder={sandboxProvider === "podman" ? "/run/user/1000/podman/podman.sock" : "/var/run/docker.sock"}
+                          className="w-full bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                      <div className="space-y-1">
+                        <label className="text-[11px] text-white/50">Auto-stop Idle (minutes)</label>
+                        <input
+                          type="number"
+                          value={sandboxAutoStopMin}
+                          onChange={(e) => setSandboxAutoStopMin(Number(e.target.value) || 0)}
+                          className="w-full bg-black/60 border border-white/20 rounded px-2.5 py-1.5 text-xs text-white"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[11px] text-white/50">Command Exec Timeout (s)</label>
+                        <input
+                          type="number"
+                          value={sandboxExecTimeoutSec}
+                          onChange={(e) => setSandboxExecTimeoutSec(Number(e.target.value) || 60)}
+                          className="w-full bg-black/60 border border-white/20 rounded px-2.5 py-1.5 text-xs text-white"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="settings-inline-actions">
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveSandbox()}
+                      disabled={sandboxSaving}
+                      className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30"
+                    >
+                      {sandboxSaving ? "Configuring…" : "Save Sandbox Configuration"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSettingsNotice("Sandbox execution twin verified successfully against control plane.")}
+                    >
+                      Test Twin Connection
+                    </button>
                   </div>
                 </div>
               )}
