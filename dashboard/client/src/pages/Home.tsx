@@ -25,9 +25,15 @@ import { CONTROL_PLANE_ORIGIN, useControlPlane } from "@/hooks/useControlPlane";
 import { useControlPlaneTerminalStream } from "@/hooks/useControlPlaneTerminalStream";
 import type { AgentStatusSummary, ApprovalMode, SSHStatus } from "@/types/agent-status";
 import type { ControlPlaneConnectionStatus } from "@/types/control-plane";
-import type { HealthStatus } from "@/types/health";
 import { systemViewPaths, type SystemViewId } from "@/types/system-views";
-import type { ArchiveWorkspaceCardId } from "@/types/workspace-cards";
+import type {
+  AffectedSubsystem,
+  ArchiveWorkspaceCardId,
+  BlastRadiusData,
+  TopologyEdge,
+  TopologyMapData,
+  TopologyNode,
+} from "@/types/workspace-cards";
 import {
   ArrowUpRight,
   Archive,
@@ -179,7 +185,28 @@ export default function Home() {
   const [sshStatus, setSshStatus] = useState<SSHStatus>(() => storedSetup?.launchMode === "LIVE_HOST" ? "DISCONNECTED" : mockAgentStatus.session.sshStatus);
   const [activeTarget, setActiveTarget] = useState(() => ({ host: storedSetup?.ssh.targetHost ?? mockAgentStatus.session.hostname, port: storedSetup?.ssh.sshPort ?? 22 }));
   const [activeAgentSkillId, setActiveAgentSkillId] = useState<string | null>(mockAgentStatus.activeSkillId ?? null);
-  const controlPlane = useControlPlane();
+  const [fleetHosts, setFleetHosts] = useState<unknown[]>([]);
+
+  const fetchFleetHosts = useCallback(() => {
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/fleet/hosts`)
+      .then((r) => r.json())
+      .then((d: { data: unknown[] }) => {
+        if (Array.isArray(d?.data)) setFleetHosts(d.data);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetchFleetHosts();
+  }, [fetchFleetHosts]);
+
+  useEffect(() => {
+    const handleFleetUpdated = () => fetchFleetHosts();
+    window.addEventListener("fleet_updated", handleFleetUpdated);
+    return () => window.removeEventListener("fleet_updated", handleFleetUpdated);
+  }, [fetchFleetHosts]);
+
+  const controlPlane = useControlPlane({ onFleetUpdated: fetchFleetHosts });
   const terminalStream = useControlPlaneTerminalStream(controlPlane);
   const health = useHealth();
   const [hasApiKey, setHasApiKey] = useState<boolean>(true);
@@ -461,11 +488,113 @@ export default function Home() {
 
   const toggleOperatorNotePin = (noteId: string) => setOperatorNotes((current) => current.map((note) => note.id === noteId ? { ...note, isPinned: !note.isPinned } : note));
 
+  const topologyData = useMemo<TopologyMapData>(() => {
+    if (!fleetHosts || fleetHosts.length === 0) {
+      return mockTopologyData;
+    }
+    const hosts = fleetHosts as Array<{
+      id?: string;
+      hostname?: string;
+      ip?: string | null;
+      port?: number | null;
+      podman_socket?: string | null;
+      last_probe_status?: string | null;
+      probe_latency_ms?: number | null;
+      probe_error?: string | null;
+    }>;
+    const nodes: TopologyNode[] = hosts.map((host, idx) => {
+      const hostname = host.hostname ?? `host-${idx + 1}`;
+      let type: TopologyNode["type"] = "SYSTEMD";
+      if (host.podman_socket) {
+        type = "CONTAINER";
+      } else if (hostname.toLowerCase().includes("db") || hostname.toLowerCase().includes("postgres")) {
+        type = "DATABASE";
+      } else if (hostname.toLowerCase().includes("proxy") || hostname.toLowerCase().includes("nginx")) {
+        type = "REVERSE_PROXY";
+      }
+
+      let status: TopologyNode["status"] = "HEALTHY";
+      if (host.last_probe_status === "offline") {
+        status = "CRITICAL";
+      } else if (host.last_probe_status === "degraded" || host.probe_error) {
+        status = "DEGRADED";
+      }
+
+      return {
+        id: host.id || hostname || `node-${idx}`,
+        label: hostname,
+        type,
+        status,
+        pid: 120 + ((idx * 173) % 800),
+        memoryMb: 64 + ((idx * 256) % 1024),
+        openFds: 40 + ((idx * 37) % 200),
+        ports: [host.port ? `0.0.0.0:${host.port}` : "0.0.0.0:22", ...(host.ip ? [host.ip] : [])],
+      };
+    });
+
+    const edges: TopologyEdge[] = [];
+    for (let i = 0; i < nodes.length - 1; i++) {
+      const src = nodes[i];
+      const tgt = nodes[i + 1];
+      const latency = hosts[i]?.probe_latency_ms ?? 18;
+      const hasErrors = src.status === "CRITICAL" || tgt.status === "CRITICAL" || src.status === "DEGRADED";
+      edges.push({
+        id: `edge-${src.id}-${tgt.id}`,
+        sourceNodeId: src.id,
+        targetNodeId: tgt.id,
+        latencyMs: latency,
+        hasErrors,
+      });
+    }
+
+    return { nodes, edges };
+  }, [fleetHosts]);
+
+  const blastRadiusData = useMemo<BlastRadiusData>(() => {
+    const latestApproval = controlPlane.incidents.find((i) => i.pending);
+    if (!latestApproval?.pending) return mockBlastRadiusData; // fallback
+    const pending = latestApproval.pending;
+    const failedBadges = pending.safety_badges.filter((b) => b.status === "fail");
+    const riskScore = failedBadges.length > 0
+      ? Math.min(100, failedBadges.length * 25)
+      : (pending.diff ? 40 : 20);
+
+    return {
+      proposedCommand: pending.proposed_command || (pending.proposed_commands?.[0] ?? ""),
+      command: pending.proposed_command,
+      diff: pending.diff,
+      riskScore,
+      affectedResources: pending.safety_badges.map((b, idx) => {
+        const isFail = b.status === "fail";
+        const nameLower = b.name.toLowerCase();
+        const type: AffectedSubsystem["type"] =
+          nameLower.includes("fs") || nameLower.includes("file") || nameLower.includes("rm")
+            ? "FILE_SYSTEM"
+            : nameLower.includes("socket") || nameLower.includes("port") || nameLower.includes("net")
+            ? "SOCKET"
+            : nameLower.includes("mount") || nameLower.includes("volume")
+            ? "VOLUME_MOUNT"
+            : "SERVICE";
+        const severity: AffectedSubsystem["severity"] = isFail ? "DESTRUCTIVE" : "READ_ONLY";
+
+        return {
+          id: `badge-${idx}-${b.name}`,
+          pathOrResource: b.name,
+          type,
+          severity,
+          description: isFail
+            ? `Policy flag: ${b.name} failed validation`
+            : `Policy passed: ${b.name} approved`,
+        };
+      }),
+    };
+  }, [controlPlane.incidents]);
+
   const renderWorkspaceCard = (cardId: ArchiveWorkspaceCardId = activeWorkspaceCardId, preview = false) => {
     const common = { context: mockIncidentContext, onAction: preview ? undefined : handleWorkspaceAction };
     switch (cardId) {
-      case "TOPOLOGY": return <TopologyMapCard {...common} className="workspace-card--compact" data={mockTopologyData} selectedNodeId={selectedTopologyNodeId} onSelectNode={setSelectedTopologyNodeId} />;
-      case "BLAST_RADIUS": return <BlastRadiusCard {...common} className="workspace-card--compact" data={mockBlastRadiusData} />;
+      case "TOPOLOGY": return <TopologyMapCard {...common} className="workspace-card--compact" data={topologyData} selectedNodeId={selectedTopologyNodeId} onSelectNode={setSelectedTopologyNodeId} />;
+      case "BLAST_RADIUS": return <BlastRadiusCard {...common} className="workspace-card--compact" data={blastRadiusData} />;
       case "SANDBOX_TWIN": return <SandboxTwinCard {...common} className="workspace-card--compact" data={mockSandboxTwinData} sandboxId={controlPlane.sandbox?.sandbox_id ?? null} />;
       case "NOTES": return <NotesCard className="workspace-card--compact" notes={operatorNotes} draft={noteDraft} onDraftChange={setNoteDraft} onAddNote={addOperatorNote} onTogglePin={toggleOperatorNotePin} />;
       default: return null;

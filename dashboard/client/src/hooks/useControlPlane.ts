@@ -92,6 +92,15 @@ function terminalChunkFor(event: ControlPlaneEvent): string {
   }
 }
 
+export interface UseControlPlaneOptions {
+  /** Called for each streamed token during a conversation turn. */
+  onConverseThinking?: (content: string, step: number) => void;
+  /** Called when a conversation turn completes or errors. */
+  onConverseComplete?: (content: string, status: "done" | "failed") => void;
+  /** Called when a fleet host probe update event is received. */
+  onFleetUpdated?: (hostId: string, payload: { status: string; latency_ms: number }) => void;
+}
+
 export interface UseControlPlaneReturn {
   status: ControlPlaneConnectionStatus;
   /** Live incidents, newest first. */
@@ -109,6 +118,8 @@ export interface UseControlPlaneReturn {
   /** POST an operator decision to /api/approvals; rejects on non-2xx. */
   approve: (incidentId: string) => Promise<void>;
   reject: (incidentId: string) => Promise<void>;
+  /** POST a freeform message to /converse; streams back via WebSocket callbacks. */
+  converse: (message: string) => Promise<void>;
 }
 
 /**
@@ -116,7 +127,8 @@ export interface UseControlPlaneReturn {
  * to the incident plane, keeps an incident deck in sync, and relays operator
  * decisions to the approval route. Reconnects with backoff; nulls out on unmount.
  */
-export function useControlPlane(): UseControlPlaneReturn {
+export function useControlPlane(opts: UseControlPlaneOptions = {}): UseControlPlaneReturn {
+  const { onConverseThinking, onConverseComplete, onFleetUpdated } = opts;
   const [status, setStatus] = useState<ControlPlaneConnectionStatus>("CONNECTING");
   const [incidents, setIncidents] = useState<DeckIncident[]>([]);
   const [terminalChunk, setTerminalChunk] = useState("");
@@ -128,6 +140,20 @@ export function useControlPlane(): UseControlPlaneReturn {
   const reconnectTimerRef = useRef<number | null>(null);
   const attemptsRef = useRef(0);
   const disposedRef = useRef(false);
+  const onConverseThinkingRef = useRef(onConverseThinking);
+  const onConverseCompleteRef = useRef(onConverseComplete);
+  const onFleetUpdatedRef = useRef(onFleetUpdated);
+
+  // Keep refs current so closures inside handleEvent always call the latest version
+  useEffect(() => {
+    onConverseThinkingRef.current = onConverseThinking;
+  }, [onConverseThinking]);
+  useEffect(() => {
+    onConverseCompleteRef.current = onConverseComplete;
+  }, [onConverseComplete]);
+  useEffect(() => {
+    onFleetUpdatedRef.current = onFleetUpdated;
+  }, [onFleetUpdated]);
 
   const handleEvent = useCallback((raw: string) => {
     let event: ControlPlaneEvent;
@@ -136,14 +162,31 @@ export function useControlPlane(): UseControlPlaneReturn {
     } catch {
       return;
     }
-    if (
-      !event ||
-      typeof event !== "object" ||
-      typeof event.type !== "string" ||
-      typeof event.incident_id !== "string"
-    ) {
+    if (!event || typeof event !== "object" || typeof event.type !== "string") return;
+
+    // Handle converse events (session_id, not incident_id)
+    if (event.type === "converse_thinking") {
+      onConverseThinkingRef.current?.(String(event.payload.content ?? ""), Number(event.payload.step ?? 0));
       return;
     }
+    if (event.type === "converse_complete") {
+      onConverseCompleteRef.current?.(
+        String(event.payload.content ?? ""),
+        event.payload.status === "done" ? "done" : "failed",
+      );
+      return;
+    }
+
+    if (event.type === "fleet_updated") {
+      onFleetUpdatedRef.current?.(event.host_id, event.payload);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("fleet_updated", { detail: event }));
+      }
+      return;
+    }
+
+    // Incident events need incident_id
+    if (typeof event.incident_id !== "string") return;
     if (!event.payload || typeof event.payload !== "object") return;
 
     switch (event.type) {
@@ -280,6 +323,18 @@ export function useControlPlane(): UseControlPlaneReturn {
     [],
   );
 
+  const converse = useCallback(async (message: string) => {
+    const response = await fetch(`${CONTROL_PLANE_ORIGIN}/converse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+    if (!response.ok) {
+      throw new Error(`converse request failed (HTTP ${response.status})`);
+    }
+    // Response is 202 Accepted — events stream back over the existing WebSocket
+  }, []);
+
   const isExecuting = isPlaneExecuting(incidents);
   const blockedExecutionCount = countBlockedExecutions(incidents);
   return {
@@ -292,5 +347,6 @@ export function useControlPlane(): UseControlPlaneReturn {
     sandbox: activeSandbox,
     approve: (incidentId) => decide(incidentId, "approved"),
     reject: (incidentId) => decide(incidentId, "rejected"),
+    converse,
   };
 }

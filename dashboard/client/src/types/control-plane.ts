@@ -33,7 +33,22 @@ export type ControlPlaneEvent =
       incident_id: string;
       payload: { status: ExecutionStatus };
     }
-  | { type: "sandbox_started"; incident_id: string; payload: { sandbox_id: string; thread_id?: string; created_at: string } };
+  | { type: "sandbox_started"; incident_id: string; payload: { sandbox_id: string; thread_id?: string; created_at: string } }
+  | {
+      type: "fleet_updated";
+      host_id: string;
+      payload: { status: string; latency_ms: number };
+    }
+  | {
+      type: "converse_thinking";
+      session_id: string;
+      payload: { content: string; step: number };
+    }
+  | {
+      type: "converse_complete";
+      session_id: string;
+      payload: { content: string; status: "done" | "failed" };
+    };
 
 export type IncidentDeckStatus =
   | "diagnosing"

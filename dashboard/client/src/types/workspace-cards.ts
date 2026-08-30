@@ -53,7 +53,13 @@ export interface AffectedSubsystem {
   description: string;
 }
 
-export interface BlastRadiusData { proposedCommand: string; riskScore: number; affectedResources: AffectedSubsystem[]; }
+export interface BlastRadiusData {
+  proposedCommand: string;
+  command?: string;
+  diff?: string;
+  riskScore: number;
+  affectedResources: AffectedSubsystem[];
+}
 
 export type TimelineEventType = "TELEMETRY_SPIKE" | "AGENT_THOUGHT" | "CLI_EXECUTION" | "AST_INTERCEPT" | "HUMAN_APPROVAL";
 export interface TimelineEvent { id: string; timestamp: string; type: TimelineEventType; title: string; description: string; beforeMetrics?: { cpu: number; ram: number }; afterMetrics?: { cpu: number; ram: number }; isCritical: boolean; }
