@@ -6,6 +6,7 @@ import { initDb } from "./db";
 import { startServer } from "./server";
 import { createIncidentRouter } from "./incident-plane";
 import { createSandboxRouter } from "./routes/sandbox";
+import { createDemoRouter } from "./routes/demo";
 
 import { createModelRouter } from "./routes/model";
 import { runTrueForgeSetup } from "./trueforge-setup";
@@ -94,6 +95,7 @@ async function main(): Promise<void> {
         app.use(createIncidentRouter({ getTf: () => tf, logger, broadcast, model: config.trueforgeModel }));
         app.use(createSandboxRouter({ getTf: () => tf, logger, broadcast, apiToken: config.controlPlaneApiToken }));
         app.use(createModelRouter({ logger, getTf: () => tf, model: config.trueforgeModel, apiToken: config.controlPlaneApiToken }));
+        app.use(createDemoRouter({ logger, broadcast, port: config.port }));
       },
     });
   } catch (err) {
