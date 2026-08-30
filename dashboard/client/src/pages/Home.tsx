@@ -321,11 +321,16 @@ export default function Home() {
 
   const handleConverseComplete = useCallback((content: string, status: "done" | "failed") => {
     setConversationMessages((current) => {
+      const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       const last = current[current.length - 1];
+      const finalContent = content && content !== "Analyzing request with TrueForge..."
+        ? content
+        : (status === "done" ? "Request processed successfully." : "Turn completed.");
+
       if (last && last.role === "assistant" && last.id.startsWith("streaming-")) {
         return [
           ...current.slice(0, -1),
-          { ...last, id: `lupin-${Date.now()}`, content: content || last.content },
+          { ...last, id: `lupin-${Date.now()}`, time, content: finalContent },
         ];
       }
       return [
@@ -334,8 +339,8 @@ export default function Home() {
           id: `lupin-${Date.now()}`,
           role: "assistant",
           label: "LUPIN",
-          time: "NOW",
-          content: content || (status === "done" ? "Action completed." : "Turn failed."),
+          time,
+          content: finalContent,
         },
       ];
     });
