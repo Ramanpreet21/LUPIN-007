@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import type { UseControlPlaneReturn } from "@/hooks/useControlPlane";
 import type { UseTerminalStreamReturn } from "@/types/terminal";
 
@@ -34,18 +34,29 @@ export function nextTerminalDelta(
 export function useControlPlaneTerminalStream(
   plane: UseControlPlaneReturn,
 ): UseTerminalStreamReturn {
+  const deliveredRef = useRef<number>(plane.terminalCursor);
   const sendData = useCallback(() => {}, []);
   const sendResize = useCallback(() => {}, []);
-  // Pure adapter: the consumer derives each write from the bounded window plus
-  // the monotonic cursor, so nothing here tracks delivery or terminal liveness.
+
+  const delta = useMemo(() => {
+    const result = nextTerminalDelta(
+      plane.terminalChunk,
+      plane.terminalCursor,
+      deliveredRef.current,
+    );
+    deliveredRef.current = result.delivered;
+    return result.incomingData;
+  }, [plane.terminalChunk, plane.terminalCursor]);
+
   return useMemo<UseTerminalStreamReturn>(
     () => ({
+      incomingData: delta,
       transcript: plane.terminalChunk,
       terminalCursor: plane.terminalCursor,
       connectionStatus: plane.status,
       sendData,
       sendResize,
     }),
-    [plane.terminalChunk, plane.terminalCursor, plane.status, sendData, sendResize],
+    [delta, plane.terminalChunk, plane.terminalCursor, plane.status, sendData, sendResize],
   );
 }

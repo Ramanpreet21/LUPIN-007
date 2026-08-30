@@ -17,7 +17,6 @@ import { NotesCard, type OperatorNote } from "@/components/workspace-cards/Notes
 import "./archive-fanout.css";
 import "@/components/workspace-cards/workspace-cards.css";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { mockAgentStatus } from "@/data/mockAgentStatus";
 import { useHealth } from "@/hooks/useHealth";
 import { mockBlastRadiusData, mockIncidentContext, mockSandboxTwinData, mockTopologyData, workspaceCardDefinitions } from "@/data/mockWorkspaceCards";
 import { IncidentDeck } from "@/components/IncidentDeck";
@@ -27,6 +26,22 @@ import { useControlPlaneTerminalStream } from "@/hooks/useControlPlaneTerminalSt
 import type { AgentStatusSummary, ApprovalMode, SSHStatus } from "@/types/agent-status";
 import type { ControlPlaneConnectionStatus } from "@/types/control-plane";
 import { systemViewPaths, type SystemViewId } from "@/types/system-views";
+
+const defaultAgentStatus: AgentStatusSummary = {
+  session: { targetIp: "192.168.1.104", hostname: "relay-04.lan", sshStatus: "CONNECTED", latencyMs: 8, targetOs: "Ubuntu 24.04" },
+  engine: { mode: "LOCAL_MODE", orchestratorRuntime: "TrueForge", containerRuntime: "PODMAN", socketConnected: true },
+  skills: [
+    { id: "ssh", displayName: "SSH", category: "SSH", status: "READY", executionPolicy: "POLICY_GATED", policyConstraintMessage: "Remote mutations require confirmation." },
+    { id: "files", displayName: "Files", category: "Filesystem", status: "READY", executionPolicy: "AUTONOMOUS" },
+    { id: "ast", displayName: "AST", category: "AST_Parser", status: "READY", executionPolicy: "AUTONOMOUS" },
+    { id: "sandbox", displayName: "Sandbox", category: "Sandbox_Runner", status: "EXECUTING", executionPolicy: "POLICY_GATED", policyConstraintMessage: "Production network access is restricted." },
+  ],
+  activeSkillId: "sandbox",
+  safety: { approvalMode: "AUTONOMOUS", isExecuting: true },
+  telemetry: { activeModel: "Claude 3.5 Sonnet", tokensUsed: 14200, maxTokens: 200000 },
+  sandboxTwin: { id: "twin-88a2", state: "ACTIVE" },
+  policy: { activeRuleSet: "Prod-Restricted", blockedCommandCount: 3 },
+};
 import type {
   AffectedSubsystem,
   ArchiveWorkspaceCardId,
@@ -194,13 +209,13 @@ export default function Home() {
   const [launchMode, setLaunchMode] = useState(() => storedSetup?.launchMode ?? "DEMO_MOCK");
   const [commandOpen, setCommandOpen] = useState(false);
   const [draft, setDraft] = useState("");
-  const [approvalMode, setApprovalMode] = useState<ApprovalMode>(() => storedSetup?.defaultApprovalMode ?? mockAgentStatus.safety.approvalMode);
+  const [approvalMode, setApprovalMode] = useState<ApprovalMode>(() => storedSetup?.defaultApprovalMode ?? defaultAgentStatus.safety.approvalMode);
   const [agentStopped, setAgentStopped] = useState(false);
   const [models, setModels] = useState<Array<{ id: string; name: string }>>([]);
-  const [selectedModel, setSelectedModel] = useState<string>(() => mockAgentStatus.telemetry.activeModel);
-  const [sshStatus, setSshStatus] = useState<SSHStatus>(() => storedSetup?.launchMode === "LIVE_HOST" ? "DISCONNECTED" : mockAgentStatus.session.sshStatus);
-  const [activeTarget, setActiveTarget] = useState(() => ({ host: storedSetup?.ssh.targetHost ?? mockAgentStatus.session.hostname, port: storedSetup?.ssh.sshPort ?? 22 }));
-  const [activeAgentSkillId, setActiveAgentSkillId] = useState<string | null>(mockAgentStatus.activeSkillId ?? null);
+  const [selectedModel, setSelectedModel] = useState<string>(() => defaultAgentStatus.telemetry.activeModel);
+  const [sshStatus, setSshStatus] = useState<SSHStatus>(() => storedSetup?.launchMode === "LIVE_HOST" ? "DISCONNECTED" : defaultAgentStatus.session.sshStatus);
+  const [activeTarget, setActiveTarget] = useState(() => ({ host: storedSetup?.ssh.targetHost ?? defaultAgentStatus.session.hostname, port: storedSetup?.ssh.sshPort ?? 22 }));
+  const [activeAgentSkillId, setActiveAgentSkillId] = useState<string | null>(defaultAgentStatus.activeSkillId ?? null);
   const [fleetHosts, setFleetHosts] = useState<unknown[]>([]);
 
   const fetchFleetHosts = useCallback(() => {
@@ -357,18 +372,18 @@ export default function Home() {
 
   const agentStatusData = useMemo<AgentStatusSummary>(
     () => ({
-      ...mockAgentStatus,
-      session: { ...mockAgentStatus.session, hostname: activeTarget.host, targetIp: `SSH · ${activeTarget.port}`, sshStatus: transportToSshStatus[controlPlane.status], latencyMs: controlPlane.status === "CONNECTED" ? mockAgentStatus.session.latencyMs : 0 },
-      engine: { ...mockAgentStatus.engine, socketConnected: controlPlane.status === "CONNECTED" },
+      ...defaultAgentStatus,
+      session: { ...defaultAgentStatus.session, hostname: activeTarget.host, targetIp: `SSH · ${activeTarget.port}`, sshStatus: transportToSshStatus[controlPlane.status], latencyMs: controlPlane.status === "CONNECTED" ? defaultAgentStatus.session.latencyMs : 0 },
+      engine: { ...defaultAgentStatus.engine, socketConnected: controlPlane.status === "CONNECTED" },
       activeSkillId: activeAgentSkillId,
-      skills: mockAgentStatus.skills.map((skill) =>
+      skills: defaultAgentStatus.skills.map((skill) =>
         skill.id === activeAgentSkillId && skill.status !== "RESTRICTED"
           ? { ...skill, status: controlPlane.isExecuting ? "EXECUTING" : "READY" }
           : skill,
       ),
-      safety: { ...mockAgentStatus.safety, approvalMode, isExecuting: controlPlane.isExecuting && !agentStopped },
-      policy: { ...mockAgentStatus.policy, blockedCommandCount: controlPlane.blockedExecutionCount },
-      telemetry: { ...mockAgentStatus.telemetry, activeModel: selectedModel },
+      safety: { ...defaultAgentStatus.safety, approvalMode, isExecuting: controlPlane.isExecuting && !agentStopped },
+      policy: { ...defaultAgentStatus.policy, blockedCommandCount: controlPlane.blockedExecutionCount },
+      telemetry: { ...defaultAgentStatus.telemetry, activeModel: selectedModel },
     }),
     [activeAgentSkillId, activeTarget, agentStopped, approvalMode, controlPlane.status, controlPlane.isExecuting, controlPlane.blockedExecutionCount, selectedModel],
   );
@@ -882,7 +897,7 @@ export default function Home() {
               {([ ["general", "General"], ["sandbox", "Sandbox twin"], ["keys", "API keys"], ["mcp", "MCP connections"], ["skills", "Skills"] ] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={settingsSection === id} className={settingsSection === id ? "is-active" : ""} onClick={() => { setSettingsSection(id); setSettingsNotice(""); if (id === "sandbox") void loadSandboxSettings(); }}>{label}</button>)}
             </div>
             <section className="management-dialog-body">
-              {settingsSection === "general" && <div className="settings-section-stack"><div className="settings-summary-card"><ShieldCheck size={18} /><div><strong>{launchMode === "LIVE_HOST" ? "Live-host control plane" : "Local demo control plane"}</strong><span>{storedSetup ? `Configured for ${operatorLabel} · ${activeTarget.host}` : "Policy guards are active for remote mutations and outbound network actions."}</span></div><b>{launchMode === "LIVE_HOST" ? "READY" : "DEMO"}</b></div><div className="settings-metric-grid"><div><span>Orchestrator</span><strong>{mockAgentStatus.engine.orchestratorRuntime}</strong></div><div><span>Container runtime</span><strong>{mockAgentStatus.engine.containerRuntime}</strong></div><div><span>Approval mode</span><strong>{approvalMode === "AUTONOMOUS" ? "Autonomous" : "Gated"}</strong></div></div><div className="settings-inline-actions"><button type="button" onClick={() => setSettingsNotice("Diagnostic preferences saved for this session.")}>Save preferences</button><button type="button" onClick={() => setSettingsNotice("Policy review is ready in the control-plane audit queue.")}>Review policy</button><button type="button" onClick={restartFirstRunSetup}>Restart setup</button></div></div>}
+              {settingsSection === "general" && <div className="settings-section-stack"><div className="settings-summary-card"><ShieldCheck size={18} /><div><strong>{launchMode === "LIVE_HOST" ? "Live-host control plane" : "Local demo control plane"}</strong><span>{storedSetup ? `Configured for ${operatorLabel} · ${activeTarget.host}` : "Policy guards are active for remote mutations and outbound network actions."}</span></div><b>{launchMode === "LIVE_HOST" ? "READY" : "DEMO"}</b></div><div className="settings-metric-grid"><div><span>Orchestrator</span><strong>{defaultAgentStatus.engine.orchestratorRuntime}</strong></div><div><span>Container runtime</span><strong>{defaultAgentStatus.engine.containerRuntime}</strong></div><div><span>Approval mode</span><strong>{approvalMode === "AUTONOMOUS" ? "Autonomous" : "Gated"}</strong></div></div><div className="settings-inline-actions"><button type="button" onClick={() => setSettingsNotice("Diagnostic preferences saved for this session.")}>Save preferences</button><button type="button" onClick={() => setSettingsNotice("Policy review is ready in the control-plane audit queue.")}>Review policy</button><button type="button" onClick={restartFirstRunSetup}>Restart setup</button></div></div>}
               {settingsSection === "sandbox" && <div className="settings-section-stack">
                 <div className="settings-section-heading"><div><h3>Multi-Runtime Sandbox Isolation</h3><p>Configure local container execution (Podman/Docker) or cloud/dedicated Daytona microVMs.</p></div><Box size={18} /></div>
                 <div className="settings-field-group">

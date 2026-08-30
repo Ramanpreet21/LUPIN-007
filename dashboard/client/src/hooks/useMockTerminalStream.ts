@@ -7,7 +7,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { TerminalDimensions, UseTerminalStreamReturn } from "@/types/terminal";
 
 const ansi = { mint: "\x1b[38;5;121m", amber: "\x1b[38;5;221m", red: "\x1b[38;5;203m", muted: "\x1b[38;5;245m", reset: "\x1b[0m" };
-const MAX_TERMINAL_CHARS = 12_000;
 
 function replyFor(command: string) {
   if (command === "clear") return "\x1b[2J\x1b[H";
@@ -17,17 +16,12 @@ function replyFor(command: string) {
 }
 
 export function useMockTerminalStream(): UseTerminalStreamReturn {
-  const [transcript, setTranscript] = useState("");
-  const terminalCursorRef = useRef(0);
+  const [incomingData, setIncomingData] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<UseTerminalStreamReturn["connectionStatus"]>("CONNECTING");
   const commandBuffer = useRef("");
   const dimensions = useRef<TerminalDimensions>({ cols: 0, rows: 0 });
 
-  // Mirror the incident-plane contract: bounded transcript + monotonic cursor.
-  const emit = useCallback((data: string) => {
-    terminalCursorRef.current += data.length;
-    setTranscript((prev) => `${prev}${data}`.slice(-MAX_TERMINAL_CHARS));
-  }, []);
+  const emit = useCallback((data: string) => setIncomingData(data), []);
   useEffect(() => {
     const connect = window.setTimeout(() => {
       setConnectionStatus("CONNECTED");
@@ -51,5 +45,5 @@ export function useMockTerminalStream(): UseTerminalStreamReturn {
     }
   }, [emit]);
   const sendResize = useCallback((next: TerminalDimensions) => { dimensions.current = next; }, []);
-  return { transcript, terminalCursor: terminalCursorRef.current, connectionStatus, sendData, sendResize };
+  return { incomingData, connectionStatus, sendData, sendResize };
 }
