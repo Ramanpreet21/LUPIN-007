@@ -130,6 +130,15 @@ export async function startDemoStack(
     await new Promise((r) => setTimeout(r, 1000));
   }
 
+  if (!sshReady) {
+    return {
+      ok: false,
+      engine: engine.type,
+      sshReady: false,
+      error: "SSH gateway port 2222 did not become ready within 15 seconds",
+    };
+  }
+
   // Auto-register cluster fleet hosts into SQLite database
   try {
     const db = getDb();
@@ -227,7 +236,7 @@ export async function startDemoStack(
   return {
     ok: true,
     engine: engine.type,
-    sshReady,
+    sshReady: true,
   };
 }
 
@@ -255,21 +264,44 @@ export async function getDemoStatus(workspaceRoot = process.cwd()): Promise<Demo
     const args = [...engine.composeArgs, "-f", composeFile, "ps", "--format", "json"];
     const { stdout } = await execFileAsync(engine.binary, args, { timeout: 10000 });
     const output = stdout.trim();
-    const running = output.includes("tf-server") || output.includes("server") || output.length > 5;
+    
+    let runningNodes: string[] = [];
+    if (output) {
+      try {
+        const parsed = output.startsWith("[")
+          ? JSON.parse(output)
+          : output.split("\n").filter(Boolean).map((line) => JSON.parse(line));
+        if (Array.isArray(parsed)) {
+          runningNodes = parsed
+            .filter((item: { State?: string; Status?: string }) => {
+              const state = (item.State || item.Status || "").toLowerCase();
+              return state.includes("running") || state.includes("up");
+            })
+            .map((item: { Service?: string; Name?: string }) => item.Service || item.Name || "")
+            .filter(Boolean);
+        }
+      } catch {
+        if (output.includes("tf-server") || output.includes("server")) {
+          runningNodes = ["tf-server"];
+        }
+      }
+    }
+
     const sshReady = await waitForPort("127.0.0.1", 2222, 1000);
     const alertmanagerReady = await waitForPort("127.0.0.1", 9093, 1000);
+    const running = runningNodes.length > 0 && sshReady;
 
     return {
       running,
       engine: engine.type,
       sshReady,
       alertmanagerReady,
-      nodes: ["tf-server", "tf-client1", "tf-client2", "tf-client3", "tf-attacker", "tf-alertmanager", "tf-prometheus"],
+      nodes: runningNodes,
     };
   } catch {
     const sshReady = await waitForPort("127.0.0.1", 2222, 500);
     return {
-      running: sshReady,
+      running: false,
       engine: engine.type,
       sshReady,
       alertmanagerReady: false,
