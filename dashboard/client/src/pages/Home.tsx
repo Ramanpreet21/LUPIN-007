@@ -4,7 +4,7 @@
  * dense, asymmetric instrument layout; dark frosted material; controlled ion-mint signal light;
  * razor-thin specular edges; quiet precision over decorative clutter.
  */
-import { type CSSProperties, type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AgentStatusCapabilitiesBar } from "@/components/AgentStatusCapabilitiesBar";
 import { FirstRunSetup, LUMA_SETUP_STORAGE_KEY, readLumaSetup, type FirstRunPreferences } from "@/components/FirstRunSetup";
 import { HealthSummaryCard } from "@/components/HealthSummaryCard";
@@ -17,17 +17,39 @@ import { NotesCard, type OperatorNote } from "@/components/workspace-cards/Notes
 import "./archive-fanout.css";
 import "@/components/workspace-cards/workspace-cards.css";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { mockAgentStatus } from "@/data/mockAgentStatus";
 import { useHealth } from "@/hooks/useHealth";
 import { mockBlastRadiusData, mockIncidentContext, mockSandboxTwinData, mockTopologyData, workspaceCardDefinitions } from "@/data/mockWorkspaceCards";
 import { IncidentDeck } from "@/components/IncidentDeck";
+import { SessionsList } from "@/components/SessionsList";
 import { CONTROL_PLANE_ORIGIN, useControlPlane } from "@/hooks/useControlPlane";
 import { useControlPlaneTerminalStream } from "@/hooks/useControlPlaneTerminalStream";
 import type { AgentStatusSummary, ApprovalMode, SSHStatus } from "@/types/agent-status";
 import type { ControlPlaneConnectionStatus } from "@/types/control-plane";
-import type { HealthStatus } from "@/types/health";
 import { systemViewPaths, type SystemViewId } from "@/types/system-views";
-import type { ArchiveWorkspaceCardId } from "@/types/workspace-cards";
+
+const defaultAgentStatus: AgentStatusSummary = {
+  session: { targetIp: "192.168.1.104", hostname: "relay-04.lan", sshStatus: "CONNECTED", latencyMs: 8, targetOs: "Ubuntu 24.04" },
+  engine: { mode: "LOCAL_MODE", orchestratorRuntime: "TrueForge", containerRuntime: "PODMAN", socketConnected: true },
+  skills: [
+    { id: "ssh", displayName: "SSH", category: "SSH", status: "READY", executionPolicy: "POLICY_GATED", policyConstraintMessage: "Remote mutations require confirmation." },
+    { id: "files", displayName: "Files", category: "Filesystem", status: "READY", executionPolicy: "AUTONOMOUS" },
+    { id: "ast", displayName: "AST", category: "AST_Parser", status: "READY", executionPolicy: "AUTONOMOUS" },
+    { id: "sandbox", displayName: "Sandbox", category: "Sandbox_Runner", status: "EXECUTING", executionPolicy: "POLICY_GATED", policyConstraintMessage: "Production network access is restricted." },
+  ],
+  activeSkillId: "sandbox",
+  safety: { approvalMode: "AUTONOMOUS", isExecuting: true },
+  telemetry: { activeModel: "Claude 3.5 Sonnet", tokensUsed: 14200, maxTokens: 200000 },
+  sandboxTwin: { id: "twin-88a2", state: "ACTIVE" },
+  policy: { activeRuleSet: "Prod-Restricted", blockedCommandCount: 3 },
+};
+import type {
+  AffectedSubsystem,
+  ArchiveWorkspaceCardId,
+  BlastRadiusData,
+  TopologyEdge,
+  TopologyMapData,
+  TopologyNode,
+} from "@/types/workspace-cards";
 import {
   ArrowUpRight,
   Archive,
@@ -59,11 +81,42 @@ import {
   Trash2,
   TriangleAlert,
   X,
+  Zap,
 } from "lucide-react";
 
 type SettingsSection = "general" | "sandbox" | "keys" | "mcp" | "skills";
 type ConversationMessage = { id: string; role: "assistant" | "user" | "system"; label: string; time: string; content: string };
 type BackendPopup = { id: string; source: string; title: string; detail: string; priority: "attention" | "routine" };
+
+export interface SkillConfig {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export interface McpConfig {
+  id: string;
+  name: string;
+  description: string;
+  url: string;
+  authType: "OAuth" | "None" | "API Key";
+}
+
+export const PRECONFIGURED_SKILLS: SkillConfig[] = [
+  { id: "diagnostic", name: "Root Cause Diagnosis", description: "Analyzes system telemetry, kernel ring buffers, and systemd units to locate incident faults." },
+  { id: "remediation", name: "Service Remediation", description: "Automated service recovery, unit restart, and memory-leak isolation runbooks." },
+  { id: "log-anomaly", name: "Log Anomaly Detector", description: "Detects spike anomalies, error bursts, and structured syslog crash traces." },
+  { id: "network-guard", name: "Network Isolation Guard", description: "Enforces egress rules and validates outbound requests during troubleshooting." },
+  { id: "disk-cleanup", name: "Disk Space Remediation", description: "Safely rotates expired journals and prunes unreachable container layer caches." },
+  { id: "runbook", name: "Runbook Automation", description: "Executes verified SRE runbook sequences against monitored infrastructure." },
+];
+
+export const PRECONFIGURED_MCPS: McpConfig[] = [
+  { id: "ssh", name: "SSH Remote Inspector", description: "Model Context Protocol adapter for secure SSH shell and remote execution.", url: "mcp://ssh.internal:8000", authType: "API Key" },
+  { id: "cli", name: "Host CLI Runner", description: "Executes sandboxed host inspection commands under policy guardrails.", url: "mcp://cli.internal:8001", authType: "None" },
+  { id: "filesystem", name: "Filesystem Audit Tool", description: "Read-only filesystem scanner for config inspection and diffing.", url: "mcp://fs.internal:8002", authType: "None" },
+  { id: "k8s", name: "Kubernetes Engine Adapter", description: "Queries pod status, deployment logs, and cluster events.", url: "https://k8s-mcp.internal/v1", authType: "OAuth" },
+];
 
 const transportToSshStatus: Record<ControlPlaneConnectionStatus, SSHStatus> = {
   CONNECTING: "RECONNECTING",
@@ -92,13 +145,7 @@ const navItems: { id: SystemViewId; label: string; icon: typeof Grid2X2 }[] = [
 
 const viewIdFromPath = (): SystemViewId => (Object.entries(systemViewPaths).find(([, path]) => path === window.location.pathname)?.[0] as SystemViewId | undefined) ?? "COMMAND_DECK";
 
-const initialConversation: ConversationMessage[] = [
-  { id: "conv-01", role: "system", label: "SYSTEM", time: "09:12", content: "Conversation relay synchronized with the current control-plane session." },
-  { id: "conv-02", role: "assistant", label: "LUPIN", time: "09:13", content: "I have indexed the active workspace, retained the session context, and am ready for the next operational request." },
-  { id: "conv-03", role: "user", label: "OPERATOR", time: "09:14", content: "Summarize the outstanding work and keep me informed when a backend action requires review." },
-  { id: "conv-04", role: "assistant", label: "LUPIN", time: "09:14", content: "Three safeguards remain active. I will surface backend-initiated action requests in the notch without interrupting the conversation history." },
-  { id: "conv-05", role: "assistant", label: "LUPIN", time: "09:15", content: "The current telemetry stream is healthy. Connection controls and policy-gated operations remain available in their dedicated management surfaces." },
-];
+const initialConversation: ConversationMessage[] = [];
 
 function createWorkspaceClip(width: number, height: number): WorkspaceClip {
   const isMobile = window.innerWidth <= 540;
@@ -153,15 +200,109 @@ export default function Home() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const [settingsNotice, setSettingsNotice] = useState("");
-  const [sandboxProvider, setSandboxProvider] = useState<string>("isolated-local");
-  const [sandboxUrl, setSandboxUrl] = useState<string>("");
-  const [sandboxKey, setSandboxKey] = useState<string>("");
-  const [sandboxProbes, setSandboxProbes] = useState<Array<{ type: string; available: boolean; latencyMs?: number; details?: string; socketPath?: string; serverUrl?: string }>>([]);
-  const [sandboxSaving, setSandboxSaving] = useState(false);
-  const [mcpConnections, setMcpConnections] = useState([
-    { id: "mcp-relay", name: "Relay Control", endpoint: "wss://relay-04.lan/mcp", status: "CONNECTED" },
-    { id: "mcp-archive", name: "Archive Index", endpoint: "https://archive.lan/mcp", status: "PAUSED" },
-  ]);
+  const [settingsData, setSettingsData] = useState<Record<string, string>>({});
+  const [newSkillName, setNewSkillName] = useState("");
+  const [newSkillDesc, setNewSkillDesc] = useState("");
+  const [newMcpName, setNewMcpName] = useState("");
+  const [newMcpDesc, setNewMcpDesc] = useState("");
+  const [newMcpUrl, setNewMcpUrl] = useState("");
+  const [newMcpAuthType, setNewMcpAuthType] = useState<"None" | "API Key" | "OAuth">("None");
+
+  const DEFAULT_SANDBOX_PROVIDERS = useMemo(() => [
+    { id: "daytona", name: "Daytona Cloud (TrueForge Default)", description: "Isolated execution microVMs with snapshot support" },
+    { id: "daytona-custom", name: "Daytona Dedicated / Self-Hosted", description: "Private enterprise Daytona server instance" },
+    { id: "podman", name: "Local Podman Container", description: "Rootless local Podman container runtime" },
+    { id: "docker", name: "Local Docker Container", description: "Host Docker daemon socket" },
+    { id: "isolated-local", name: "Simulated Isolated Host Process", description: "Protected local process execution" },
+  ], []);
+
+  const [sandboxProvider, setSandboxProvider] = useState<string>("daytona");
+  const [sandboxApiKey, setSandboxApiKey] = useState<string>("");
+  const [sandboxServerUrl, setSandboxServerUrl] = useState<string>("");
+  const [sandboxAutoStopMin, setSandboxAutoStopMin] = useState<number>(30);
+  const [sandboxExecTimeoutSec, setSandboxExecTimeoutSec] = useState<number>(300);
+  const [sandboxStatus, setSandboxStatus] = useState<string>("ready");
+  const [sandboxKeyVisible, setSandboxKeyVisible] = useState<boolean>(false);
+  const [sandboxSaving, setSandboxSaving] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`)
+      .then((r) => r.json())
+      .then((d: Record<string, string>) => {
+        setSettingsData(d);
+        if (d.sandbox_url) setSandboxServerUrl(d.sandbox_url);
+        if (d.sandbox_provider) setSandboxProvider(d.sandbox_provider);
+      })
+      .catch(() => {});
+
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/settings/sandbox`)
+      .then((r) => r.json())
+      .then((d: { configured?: boolean; status?: string }) => {
+        if (d?.status) setSandboxStatus(d.status);
+      })
+      .catch(() => {});
+  }, [settingsOpen]);
+
+  const handleSaveSandbox = async () => {
+    setSandboxSaving(true);
+    setSettingsNotice("");
+    try {
+      if (sandboxApiKey.trim()) {
+        await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings/sandbox`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ apiKey: sandboxApiKey.trim() }),
+        });
+      }
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sandbox_provider: sandboxProvider,
+          sandbox_url: sandboxServerUrl,
+        }),
+      });
+      setSandboxStatus("ready");
+      setSettingsNotice(`Sandbox provider "${sandboxProvider}" configured successfully.`);
+    } catch (err) {
+      setSettingsNotice(`Failed to save sandbox: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSandboxSaving(false);
+    }
+  };
+
+  const skills = useMemo<SkillConfig[]>(() => {
+    try {
+      const raw = JSON.parse(settingsData.skills ?? "[]");
+      if (!Array.isArray(raw) || raw.length === 0) return PRECONFIGURED_SKILLS.slice(0, 3);
+      return raw.map((item) => {
+        if (typeof item === "string") {
+          const pre = PRECONFIGURED_SKILLS.find((p) => p.id === item || p.name.toLowerCase() === item.toLowerCase());
+          return pre || { id: item, name: item.charAt(0).toUpperCase() + item.slice(1), description: "Autonomous capability" };
+        }
+        return item as SkillConfig;
+      });
+    } catch {
+      return PRECONFIGURED_SKILLS.slice(0, 3);
+    }
+  }, [settingsData.skills]);
+
+  const mcps = useMemo<McpConfig[]>(() => {
+    try {
+      const raw = JSON.parse(settingsData.mcps ?? "[]");
+      if (!Array.isArray(raw) || raw.length === 0) return PRECONFIGURED_MCPS.slice(0, 3);
+      return raw.map((item) => {
+        if (typeof item === "string") {
+          const pre = PRECONFIGURED_MCPS.find((p) => p.id === item || p.name.toLowerCase() === item.toLowerCase());
+          return pre || { id: item, name: item.toUpperCase(), description: "Model Context Protocol plugin", url: `mcp://${item}.internal`, authType: "None" };
+        }
+        return item as McpConfig;
+      });
+    } catch {
+      return PRECONFIGURED_MCPS.slice(0, 3);
+    }
+  }, [settingsData.mcps]);
   const [sshConnections, setSshConnections] = useState(() => [
     { id: "primary-target", hostname: storedSetup?.ssh.targetHost ?? "relay-04.lan", address: `SSH · ${storedSetup?.ssh.sshPort ?? 22}`, status: storedSetup?.launchMode === "LIVE_HOST" ? "READY" : "CONNECTED", latency: storedSetup?.launchMode === "LIVE_HOST" ? "—" : "1 ms" },
     { id: "staging-02", hostname: "staging-02.lan", address: "SSH · 22", status: "READY", latency: "16 ms" },
@@ -171,12 +312,267 @@ export default function Home() {
   const [launchMode, setLaunchMode] = useState(() => storedSetup?.launchMode ?? "DEMO_MOCK");
   const [commandOpen, setCommandOpen] = useState(false);
   const [draft, setDraft] = useState("");
-  const [approvalMode, setApprovalMode] = useState<ApprovalMode>(() => storedSetup?.defaultApprovalMode ?? mockAgentStatus.safety.approvalMode);
+  const [approvalMode, setApprovalMode] = useState<ApprovalMode>(() => storedSetup?.defaultApprovalMode ?? defaultAgentStatus.safety.approvalMode);
   const [agentStopped, setAgentStopped] = useState(false);
-  const [sshStatus, setSshStatus] = useState<SSHStatus>(() => storedSetup?.launchMode === "LIVE_HOST" ? "DISCONNECTED" : mockAgentStatus.session.sshStatus);
-  const [activeTarget, setActiveTarget] = useState(() => ({ host: storedSetup?.ssh.targetHost ?? mockAgentStatus.session.hostname, port: storedSetup?.ssh.sshPort ?? 22 }));
-  const [activeAgentSkillId, setActiveAgentSkillId] = useState<string | null>(mockAgentStatus.activeSkillId ?? null);
-  const controlPlane = useControlPlane();
+
+  const DEFAULT_PROVIDERS = useMemo(() => [
+    { id: "google-gemini", name: "Google Gemini", defaultModel: "google-gemini/gemini-3-6-flash", requiresApiKey: true },
+    { id: "anthropic", name: "Anthropic Claude", defaultModel: "anthropic/claude-sonnet-5", requiresApiKey: true },
+    { id: "openai", name: "OpenAI", defaultModel: "openai/gpt-5-6-terra", requiresApiKey: true },
+    { id: "fireworks", name: "Fireworks", defaultModel: "fireworks/deepseek-v4-pro", requiresApiKey: true },
+    { id: "alibaba", name: "Alibaba Qwen", defaultModel: "alibaba/qwen3-8-max", requiresApiKey: true },
+    { id: "zai", name: "Zhipu AI", defaultModel: "zai/glm-5-2", requiresApiKey: true },
+    { id: "moonshot", name: "Moonshot", defaultModel: "moonshot/kimi-k3", requiresApiKey: true },
+    { id: "local", name: "Local Model (Ollama / vLLM)", defaultModel: "local", requiresApiKey: false },
+  ], []);
+
+  const DEFAULT_MODELS = useMemo(() => [
+    { id: "google-gemini/gemini-3-6-flash", name: "Gemini 3.6 Flash", provider: "Google Gemini", providerId: "google-gemini" },
+    { id: "google-gemini/gemini-3-1-pro-preview", name: "Gemini 3.1 Pro Preview", provider: "Google Gemini", providerId: "google-gemini" },
+    { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5", provider: "Anthropic", providerId: "anthropic" },
+    { id: "anthropic/claude-sonnet-4-6", name: "Claude Sonnet 4.6", provider: "Anthropic", providerId: "anthropic" },
+    { id: "anthropic/claude-opus-5", name: "Claude Opus 5", provider: "Anthropic", providerId: "anthropic" },
+    { id: "anthropic/claude-opus-4-8", name: "Claude Opus 4.8", provider: "Anthropic", providerId: "anthropic" },
+    { id: "anthropic/claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "Anthropic", providerId: "anthropic" },
+    { id: "anthropic/claude-fable-5", name: "Claude Fable 5", provider: "Anthropic", providerId: "anthropic" },
+    { id: "openai/gpt-5-6-terra", name: "GPT-5.6 Terra", provider: "OpenAI", providerId: "openai" },
+    { id: "openai/gpt-5-6-sol", name: "GPT-5.6 Sol", provider: "OpenAI", providerId: "openai" },
+    { id: "openai/gpt-5-6-luna", name: "GPT-5.6 Luna", provider: "OpenAI", providerId: "openai" },
+    { id: "openai/gpt-5-5", name: "GPT-5.5", provider: "OpenAI", providerId: "openai" },
+    { id: "openai/gpt-5-4-mini", name: "GPT-5.4 Mini", provider: "OpenAI", providerId: "openai" },
+    { id: "fireworks/deepseek-v4-pro", name: "DeepSeek V4 Pro", provider: "Fireworks", providerId: "fireworks" },
+    { id: "fireworks/kimi-k3", name: "Kimi K3", provider: "Fireworks", providerId: "fireworks" },
+    { id: "fireworks/glm-5p2", name: "GLM-5.2", provider: "Fireworks", providerId: "fireworks" },
+    { id: "fireworks/minimax-m3", name: "MiniMax M3", provider: "Fireworks", providerId: "fireworks" },
+    { id: "alibaba/qwen3-8-max", name: "Qwen 3.8 Max", provider: "Alibaba", providerId: "alibaba" },
+    { id: "alibaba/qwen3-7-max", name: "Qwen 3.7 Max", provider: "Alibaba", providerId: "alibaba" },
+    { id: "alibaba/qwen3-7-plus", name: "Qwen 3.7 Plus", provider: "Alibaba", providerId: "alibaba" },
+    { id: "alibaba/qwen3-7-flash", name: "Qwen 3.7 Flash", provider: "Alibaba", providerId: "alibaba" },
+    { id: "zai/glm-5-2", name: "GLM 5.2", provider: "Zhipu AI", providerId: "zai" },
+    { id: "zai/glm-5-turbo", name: "GLM 5 Turbo", provider: "Zhipu AI", providerId: "zai" },
+    { id: "moonshot/kimi-k3", name: "Kimi K3", provider: "Moonshot", providerId: "moonshot" },
+    { id: "moonshot/kimi-k2-7-code", name: "Kimi K2.7 Code", provider: "Moonshot", providerId: "moonshot" },
+    { id: "local", name: "Local Model (Ollama / vLLM)", provider: "Local", providerId: "local" },
+  ], []);
+
+  const [providers, setProviders] = useState(DEFAULT_PROVIDERS);
+  const [configuredProviders, setConfiguredProviders] = useState<string[]>(["google-gemini"]);
+  const [allModels, setAllModels] = useState<Array<{ id: string; name: string; provider?: string; providerId?: string }>>(DEFAULT_MODELS);
+  const [selectedModel, setSelectedModel] = useState<string>(() => storedSetup?.modelKeys.localLlmEndpoint ?? "google-gemini/gemini-3-6-flash");
+  const [selectedProvider, setSelectedProvider] = useState<string>("google-gemini");
+  const [providerApiKey, setProviderApiKey] = useState<string>("");
+  const [providerBaseUrl, setProviderBaseUrl] = useState<string>("http://localhost:11434");
+  const [providerKeyVisible, setProviderKeyVisible] = useState<boolean>(false);
+  const [sshStatus, setSshStatus] = useState<SSHStatus>(() => storedSetup?.launchMode === "LIVE_HOST" ? "DISCONNECTED" : defaultAgentStatus.session.sshStatus);
+  const [activeTarget, setActiveTarget] = useState(() => ({ host: storedSetup?.ssh.targetHost ?? defaultAgentStatus.session.hostname, port: storedSetup?.ssh.sshPort ?? 22 }));
+  const [activeAgentSkillId, setActiveAgentSkillId] = useState<string | null>(defaultAgentStatus.activeSkillId ?? null);
+  const [fleetHosts, setFleetHosts] = useState<unknown[]>([]);
+  const [selectedAlertToTrigger, setSelectedAlertToTrigger] = useState<string>("HighCPUUsage");
+  const hasApiKey = configuredProviders.length > 0;
+
+  const triggerDemoAlert = useCallback(async (alertname: string) => {
+    try {
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/demo/trigger-alert`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ alertname }),
+      });
+    } catch (err) {
+      console.error("Failed to trigger demo alert:", err);
+    }
+  }, []);
+
+  // Only show models from providers that have an API key configured (or live TrueForge/Gemini)
+  const visibleModels = useMemo(() => {
+    if (configuredProviders.length === 0) return allModels;
+    return allModels.filter((m) => {
+      const pId = m.providerId || m.id.split("/")[0];
+      return configuredProviders.includes(pId) || pId === "google-gemini" || m.provider?.includes("Configured");
+    });
+  }, [allModels, configuredProviders]);
+
+  const availableTargets = useMemo(() => {
+    const list: Array<{ id: string; hostname: string; port: number | string }> = [];
+    if (activeTarget.host) {
+      list.push({ id: "active", hostname: activeTarget.host, port: activeTarget.port });
+    }
+    if (storedSetup?.ssh?.targetHost && storedSetup.ssh.targetHost !== activeTarget.host) {
+      list.push({ id: "setup", hostname: storedSetup.ssh.targetHost, port: storedSetup.ssh.sshPort ?? 22 });
+    }
+    if (Array.isArray(fleetHosts)) {
+      for (const fh of fleetHosts as Array<{ id?: string; hostname?: string; port?: number }>) {
+        if (fh?.hostname && !list.some((t) => t.hostname === fh.hostname && String(t.port) === String(fh.port ?? 22))) {
+          list.push({ id: fh.id || fh.hostname, hostname: fh.hostname, port: fh.port ?? 22 });
+        }
+      }
+    }
+    if (Array.isArray(sshConnections)) {
+      for (const conn of sshConnections) {
+        const port = Number(conn.address.replace(/[^0-9]/g, "")) || 22;
+        if (conn?.hostname && !list.some((t) => t.hostname === conn.hostname && String(t.port) === String(port))) {
+          list.push({ id: conn.id, hostname: conn.hostname, port });
+        }
+      }
+    }
+    return list;
+  }, [activeTarget, storedSetup, fleetHosts, sshConnections]);
+
+  const handleTargetChange = useCallback((target: { host: string; port: number }) => {
+    setActiveTarget(target);
+    setConversationMessages((current) => [
+      ...current,
+      {
+        id: `sys-${Date.now()}`,
+        role: "system",
+        label: "SYSTEM",
+        time: "NOW",
+        content: `Target SSH connection switched to: ${target.host} (SSH · ${target.port}).`,
+      },
+    ]);
+  }, []);
+
+  const handleSaveProviderKey = async () => {
+    if (!selectedProvider) return;
+    try {
+      const payload: Record<string, unknown> = {
+        model_provider: selectedProvider,
+      };
+      if (providerApiKey.trim()) {
+        payload.model_api_key = providerApiKey.trim();
+        payload[`${selectedProvider.replace("-", "_")}_api_key`] = providerApiKey.trim();
+      }
+      if (providerBaseUrl.trim()) {
+        payload.model_base_url = providerBaseUrl.trim();
+      }
+
+      const res = await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const errData = (await res.json().catch(() => ({}))) as { error?: string; details?: string[] };
+        const detailMsg = Array.isArray(errData.details) && errData.details.length > 0 ? errData.details[0] : (errData.error || "Failed to configure provider on TrueForge");
+        setSettingsNotice(`Failed to configure provider: ${detailMsg}`);
+        return;
+      }
+
+      const newConfigured = Array.from(new Set([...configuredProviders, selectedProvider]));
+      setConfiguredProviders(newConfigured);
+      setSettingsNotice(`API key configured for ${providers.find((p) => p.id === selectedProvider)?.name || selectedProvider}. Models unlocked on TrueForge!`);
+      // Refresh models
+      void fetch(`${CONTROL_PLANE_ORIGIN}/api/models`)
+        .then((r) => r.json())
+        .then((d: { data?: Array<{ id: string; name: string; provider?: string; providerId?: string }>; configuredProviders?: string[] }) => {
+          if (Array.isArray(d?.data)) setAllModels(d.data);
+          if (Array.isArray(d?.configuredProviders)) setConfiguredProviders(d.configuredProviders);
+        });
+    } catch (err) {
+      setSettingsNotice(`Failed to save provider key: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const fetchFleetHosts = useCallback(() => {
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/fleet/hosts`)
+      .then((r) => r.json())
+      .then((d: { data: unknown[] }) => {
+        if (Array.isArray(d?.data)) setFleetHosts(d.data);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`)
+      .then((r) => r.json())
+      .then((data: Record<string, string>) => {
+        if (data && typeof data === "object") {
+          // If setup_completed is not true in the database (e.g. freshly cleared backend), reset to FirstRunSetup
+          if (data.setup_completed !== "true") {
+            try { window.localStorage.removeItem(LUMA_SETUP_STORAGE_KEY); } catch { /* ignore */ }
+            setStoredSetup(null);
+            setSetupComplete(false);
+          } else {
+            if (data.operator_name) setOperatorLabel(data.operator_name);
+            if (data.enforcement_mode) setApprovalMode(data.enforcement_mode as "AUTONOMOUS" | "STRICT_GATED");
+          }
+        }
+      })
+      .catch(() => {});
+    fetchFleetHosts();
+  }, [fetchFleetHosts]);
+
+  useEffect(() => {
+    const handleFleetUpdated = () => fetchFleetHosts();
+    window.addEventListener("fleet_updated", handleFleetUpdated);
+    return () => window.removeEventListener("fleet_updated", handleFleetUpdated);
+  }, [fetchFleetHosts]);
+
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const activeSessionIdRef = useRef<string | null>(null);
+  const selectSessionAbortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      selectSessionAbortControllerRef.current?.abort();
+    };
+  }, []);
+
+  const handleConverseThinking = useCallback((content: string, _step: number) => {
+    setConversationMessages((current) => {
+      const last = current[current.length - 1];
+      if (last && last.role === "assistant" && last.id.startsWith("streaming-")) {
+        const isPlaceholder = last.content === "Analyzing request with TrueForge...";
+        return [
+          ...current.slice(0, -1),
+          { ...last, content: isPlaceholder ? content : `${last.content} ${content}`.trim() },
+        ];
+      }
+      return [
+        ...current,
+        {
+          id: `streaming-${Date.now()}`,
+          role: "assistant",
+          label: "LUPIN",
+          time: "NOW",
+          content,
+        },
+      ];
+    });
+  }, []);
+
+  const handleConverseComplete = useCallback((content: string, status: "done" | "failed") => {
+    setConversationMessages((current) => {
+      const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const last = current[current.length - 1];
+      const finalContent = content && content !== "Analyzing request with TrueForge..."
+        ? content
+        : (status === "done" ? "Request processed successfully." : "Turn completed.");
+
+      if (last && last.role === "assistant" && last.id.startsWith("streaming-")) {
+        return [
+          ...current.slice(0, -1),
+          { ...last, id: `lupin-${Date.now()}`, time, content: finalContent },
+        ];
+      }
+      return [
+        ...current,
+        {
+          id: `lupin-${Date.now()}`,
+          role: "assistant",
+          label: "LUPIN",
+          time,
+          content: finalContent,
+        },
+      ];
+    });
+  }, []);
+
+  const controlPlane = useControlPlane({
+    onFleetUpdated: fetchFleetHosts,
+    onConverseThinking: handleConverseThinking,
+    onConverseComplete: handleConverseComplete,
+  });
   const terminalStream = useControlPlaneTerminalStream(controlPlane);
   const health = useHealth();
   const workspaceRef = useRef<HTMLElement>(null);
@@ -187,6 +583,66 @@ export default function Home() {
   const [selectedTopologyNodeId, setSelectedTopologyNodeId] = useState<string | null>(null);
   const [operatorNotes, setOperatorNotes] = useState<OperatorNote[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
+
+  useEffect(() => {
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/models`)
+      .then((r) => r.json())
+      .then((d: { data?: Array<{ id: string; name: string; provider?: string; providerId?: string }>; providers?: typeof DEFAULT_PROVIDERS; configuredProviders?: string[]; active?: string }) => {
+        if (Array.isArray(d?.data)) setAllModels(d.data);
+        if (Array.isArray(d?.providers)) setProviders(d.providers);
+        if (Array.isArray(d?.configuredProviders)) setConfiguredProviders(d.configuredProviders);
+        if (d?.active) setSelectedModel(d.active);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleToggleApprovalMode = useCallback(async (newMode: ApprovalMode) => {
+    setApprovalMode(newMode);
+    try {
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/policy/mode`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: newMode }),
+      });
+    } catch (err) {
+      console.error("Failed to set approval mode:", err);
+      // Revert on error
+      setApprovalMode((prev) => prev === "AUTONOMOUS" ? "STRICT_GATED" : "AUTONOMOUS");
+    }
+  }, []);
+
+  const handleEmergencyStop = useCallback(async () => {
+    if (!window.confirm("Emergency stop will cancel ALL active agent sessions. Continue?")) return;
+    setAgentStopped(true);
+    try {
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/emergency-stop`, { method: "POST" });
+    } catch (err) {
+      console.error("Emergency stop failed:", err);
+    }
+  }, []);
+
+  const handleModelChange = useCallback(async (modelId: string) => {
+    setSelectedModel(modelId);
+    try {
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: modelId }),
+      });
+      setConversationMessages((current) => [
+        ...current,
+        {
+          id: `sys-${Date.now()}`,
+          role: "system",
+          label: "SYSTEM",
+          time: "NOW",
+          content: `Active model switched to: ${modelId}. Next interactive turns and incident diagnoses will use this model.`,
+        },
+      ]);
+    } catch (err) {
+      console.error("Failed to switch model:", err);
+    }
+  }, []);
 
   const selectView = (viewId: SystemViewId) => {
     setActiveViewId(viewId);
@@ -227,29 +683,223 @@ export default function Home() {
 
   const agentStatusData = useMemo<AgentStatusSummary>(
     () => ({
-      ...mockAgentStatus,
-      session: { ...mockAgentStatus.session, hostname: activeTarget.host, targetIp: `SSH · ${activeTarget.port}`, sshStatus: transportToSshStatus[controlPlane.status], latencyMs: controlPlane.status === "CONNECTED" ? mockAgentStatus.session.latencyMs : 0 },
-      engine: { ...mockAgentStatus.engine, socketConnected: controlPlane.status === "CONNECTED" },
+      ...defaultAgentStatus,
+      session: { ...defaultAgentStatus.session, hostname: activeTarget.host, targetIp: `SSH · ${activeTarget.port}`, sshStatus: transportToSshStatus[controlPlane.status], latencyMs: controlPlane.status === "CONNECTED" ? defaultAgentStatus.session.latencyMs : 0 },
+      engine: { ...defaultAgentStatus.engine, socketConnected: controlPlane.status === "CONNECTED" },
       activeSkillId: activeAgentSkillId,
-      skills: mockAgentStatus.skills.map((skill) =>
-        skill.id === activeAgentSkillId && skill.status !== "RESTRICTED"
-          ? { ...skill, status: controlPlane.isExecuting ? "EXECUTING" : "READY" }
-          : skill,
-      ),
-      safety: { ...mockAgentStatus.safety, approvalMode, isExecuting: controlPlane.isExecuting && !agentStopped },
-      policy: { ...mockAgentStatus.policy, blockedCommandCount: controlPlane.blockedExecutionCount },
+      skills: skills.map((skill) => ({
+        id: skill.id,
+        displayName: skill.name,
+        category: "ANALYSIS",
+        status: (skill.id === activeAgentSkillId || skill.name.toLowerCase() === activeAgentSkillId?.toLowerCase()) && controlPlane.isExecuting ? "EXECUTING" : "READY",
+        executionPolicy: "AUTONOMOUS",
+      })),
+      safety: { ...defaultAgentStatus.safety, approvalMode, isExecuting: controlPlane.isExecuting && !agentStopped },
+      policy: { ...defaultAgentStatus.policy, blockedCommandCount: controlPlane.blockedExecutionCount },
+      telemetry: { ...defaultAgentStatus.telemetry, activeModel: selectedModel },
     }),
-    [activeAgentSkillId, activeTarget, agentStopped, approvalMode, controlPlane.status, controlPlane.isExecuting, controlPlane.blockedExecutionCount],
+    [activeAgentSkillId, activeTarget, agentStopped, approvalMode, controlPlane.status, controlPlane.isExecuting, controlPlane.blockedExecutionCount, selectedModel, skills],
   );
   const handleSshAction = (action: "RECONNECT" | "CLEAR_SCROLLBACK" | "SPAWN_SUBSHELL") => { if (action === "RECONNECT") { setSshStatus("RECONNECTING"); window.setTimeout(() => setSshStatus("CONNECTED"), 750); } };
   const addSshConnection = () => setSshConnections((current) => [...current, { id: `node-${current.length + 1}`, hostname: `node-${current.length + 1}.lan`, address: "SSH · 22", status: "DRAFT", latency: "—" }]);
-  const toggleMcpConnection = (id: string) => setMcpConnections((current) => current.map((connection) => connection.id === id ? { ...connection, status: connection.status === "CONNECTED" ? "PAUSED" : "CONNECTED" } : connection));
+
+  const handleAddSkill = useCallback(async (skill: SkillConfig) => {
+    const trimmedName = skill.name.trim();
+    if (!trimmedName || skills.some((s) => s.id === skill.id || s.name.toLowerCase() === trimmedName.toLowerCase())) return;
+    const updated = [...skills, { ...skill, name: trimmedName }];
+    const raw = JSON.stringify(updated);
+    setSettingsData((prev) => ({ ...prev, skills: raw }));
+    try {
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skills: raw }),
+      });
+      setSettingsNotice(`Skill "${trimmedName}" added.`);
+    } catch (err) {
+      console.error("Failed to add skill:", err);
+    }
+  }, [skills]);
+
+  const handleRemoveSkill = useCallback(async (id: string) => {
+    const updated = skills.filter((s) => s.id !== id && s.name !== id);
+    const raw = JSON.stringify(updated);
+    setSettingsData((prev) => ({ ...prev, skills: raw }));
+    try {
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skills: raw }),
+      });
+      setSettingsNotice("Skill removed.");
+    } catch (err) {
+      console.error("Failed to remove skill:", err);
+    }
+  }, [skills]);
+
+  const handleAddMcp = useCallback(async (mcp: McpConfig) => {
+    const trimmedName = mcp.name.trim();
+    const trimmedUrl = mcp.url.trim();
+    if (!trimmedName || !trimmedUrl || mcps.some((m) => m.id === mcp.id || m.name.toLowerCase() === trimmedName.toLowerCase())) return;
+    const updated = [...mcps, { ...mcp, name: trimmedName, url: trimmedUrl }];
+    const raw = JSON.stringify(updated);
+    setSettingsData((prev) => ({ ...prev, mcps: raw }));
+    try {
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mcps: raw }),
+      });
+      setSettingsNotice(`MCP connection "${trimmedName}" added.`);
+    } catch (err) {
+      console.error("Failed to add MCP:", err);
+    }
+  }, [mcps]);
+
+  const handleRemoveMcp = useCallback(async (id: string) => {
+    const updated = mcps.filter((m) => m.id !== id && m.name !== id);
+    const raw = JSON.stringify(updated);
+    setSettingsData((prev) => ({ ...prev, mcps: raw }));
+    try {
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mcps: raw }),
+      });
+      setSettingsNotice("MCP connection removed.");
+    } catch (err) {
+      console.error("Failed to remove MCP:", err);
+    }
+  }, [mcps]);
+
+  const handleCreateSession = useCallback(async () => {
+    try {
+      const res = await fetch(`${CONTROL_PLANE_ORIGIN}/api/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: selectedModel }),
+      });
+      if (res.ok) {
+        const session = (await res.json()) as { id: string; summary?: string };
+        if (selectSessionAbortControllerRef.current) {
+          selectSessionAbortControllerRef.current.abort();
+        }
+        activeSessionIdRef.current = session.id;
+        setActiveSessionId(session.id);
+        setConversationMessages([
+          {
+            id: `sys-${Date.now()}`,
+            role: "system",
+            label: "SYSTEM",
+            time: "NOW",
+            content: `Started new TrueForge interactive session: ${session.id}`,
+          },
+        ]);
+      }
+    } catch (err) {
+      console.error("Failed to create new session:", err);
+    }
+  }, [selectedModel]);
+
+  const handleSelectSession = useCallback((sessionId: string) => {
+    if (selectSessionAbortControllerRef.current) {
+      selectSessionAbortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    selectSessionAbortControllerRef.current = controller;
+    activeSessionIdRef.current = sessionId;
+    setActiveSessionId(sessionId);
+
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/sessions/${sessionId}/messages`, {
+      signal: controller.signal,
+    })
+      .then((r) => r.json())
+      .then((d: { data?: Array<{ id: string; role: string; label: string; content: string; created_at: string }> }) => {
+        if (controller.signal.aborted || activeSessionIdRef.current !== sessionId) return;
+        if (Array.isArray(d?.data) && d.data.length > 0) {
+          setConversationMessages(
+            d.data.map((m) => ({
+              id: m.id,
+              role: (m.role === "user" ? "user" : m.role === "system" ? "system" : "assistant") as "user" | "assistant" | "system",
+              label: m.label || (m.role === "user" ? "OPERATOR" : "LUPIN"),
+              time: m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "NOW",
+              content: m.content,
+            })),
+          );
+        } else {
+          setConversationMessages([
+            {
+              id: `sys-${Date.now()}`,
+              role: "system",
+              label: "SYSTEM",
+              time: "NOW",
+              content: `Switched context to session: ${sessionId}`,
+            },
+          ]);
+        }
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted || activeSessionIdRef.current !== sessionId) return;
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setConversationMessages([
+          {
+            id: `sys-${Date.now()}`,
+            role: "system",
+            label: "SYSTEM",
+            time: "NOW",
+            content: `Switched context to session: ${sessionId}`,
+          },
+        ]);
+      });
+  }, []);
+
+  const handleDeleteSession = useCallback((deletedId: string) => {
+    if (activeSessionIdRef.current === deletedId) {
+      if (selectSessionAbortControllerRef.current) {
+        selectSessionAbortControllerRef.current.abort();
+      }
+      activeSessionIdRef.current = null;
+    }
+    setActiveSessionId((current) => {
+      if (current === deletedId) {
+        setConversationMessages([]);
+        return null;
+      }
+      return current;
+    });
+  }, []);
+
   const submitConversation = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const message = draft.trim();
     if (!message) return;
-    setConversationMessages((current) => [...current, { id: `operator-${Date.now()}`, role: "user", label: "OPERATOR", time: "NOW", content: message }, { id: `lupin-${Date.now()}`, role: "assistant", label: "LUPIN", time: "NOW", content: "Request received. I have added it to the active conversation context and will surface any backend action that needs your review." }]);
+    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    setConversationMessages((current) => [
+      ...current,
+      { id: `operator-${Date.now()}`, role: "user", label: "OPERATOR", time, content: message },
+      { id: `streaming-${Date.now()}`, role: "assistant", label: "LUPIN", time, content: "Analyzing request with TrueForge..." },
+    ]);
     setDraft("");
+    void controlPlane
+      .converse(message, activeSessionId ?? undefined)
+      .then((res) => {
+        if (res?.session_id && !activeSessionIdRef.current) {
+          activeSessionIdRef.current = res.session_id;
+          setActiveSessionId(res.session_id);
+        }
+      })
+      .catch((err) => {
+        setConversationMessages((current) => [
+          ...current.filter((m) => !m.id.startsWith("streaming-")),
+          {
+            id: `err-${Date.now()}`,
+            role: "system",
+            label: "SYSTEM",
+            time: "NOW",
+            content: `Failed to dispatch to TrueForge: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ]);
+      });
   };
 
   useEffect(() => {
@@ -261,6 +911,21 @@ export default function Home() {
     window.addEventListener("luma:backend-popup", openBackendPopup as EventListener);
     return () => window.removeEventListener("luma:backend-popup", openBackendPopup as EventListener);
   }, []);
+
+  useEffect(() => {
+    const pendingIncident = controlPlane.incidents.find((i) => i.pending);
+    if (pendingIncident?.pending) {
+      const p = pendingIncident.pending;
+      setBackendPopup({
+        id: pendingIncident.incident_id,
+        source: `Incident ${pendingIncident.incident_id}`,
+        title: "Action approval required",
+        detail: p.proposed_command || (p.proposed_commands?.[0] ?? "A destructive command requires operator approval before execution."),
+        priority: "attention",
+      });
+      setNotchMenuOpen(true);
+    }
+  }, [controlPlane.incidents]);
 
   useEffect(() => {
     const viewport = conversationViewportRef.current;
@@ -277,12 +942,27 @@ export default function Home() {
     setSshStatus(preferences.launchMode === "LIVE_HOST" ? "DISCONNECTED" : "CONNECTED");
     setSshConnections((current) => [{ id: "primary-target", hostname: preferences.ssh.targetHost, address: `SSH · ${preferences.ssh.sshPort}`, status: preferences.launchMode === "LIVE_HOST" ? "READY" : "CONNECTED", latency: preferences.launchMode === "LIVE_HOST" ? "—" : "1 ms" }, ...current.filter((connection) => connection.id !== "primary-target")]);
     setSetupComplete(true);
+
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        setup_completed: "true",
+        operator_name: preferences.operatorLabel,
+        enforcement_mode: preferences.defaultApprovalMode,
+      }),
+    }).catch(() => {});
   };
   const restartFirstRunSetup = () => {
     try { window.localStorage.removeItem(LUMA_SETUP_STORAGE_KEY); } catch { /* Browser storage can be unavailable. */ }
     setSettingsOpen(false);
     setStoredSetup(null);
     setSetupComplete(false);
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ setup_completed: "false" }),
+    }).catch(() => {});
   };
 
   const configureSandbox = async (apiKey: string) => {
@@ -299,70 +979,6 @@ export default function Home() {
       return { ok: true, status: body.status, message: "Sandbox provider configured." };
     } catch (err) {
       return { ok: false, message: err instanceof Error ? err.message : String(err) };
-    }
-  };
-  const configureModel = async (apiKey: string) => {
-    try {
-      const response = await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings/model`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ apiKey }),
-      });
-      const body = (await response.json().catch(() => ({}))) as { status?: string; error?: string; details?: string[] };
-      if (!response.ok) {
-        return { ok: false, status: body.error, message: body.details?.[0] ?? body.error ?? `HTTP ${response.status}` };
-      }
-      return { ok: true, status: body.status, message: "Model provider configured for TrueForge sessions." };
-    } catch (err) {
-      return { ok: false, message: err instanceof Error ? err.message : String(err) };
-    }
-  };
-
-  const loadSandboxSettings = async () => {
-    try {
-      const [probesRes, settingsRes] = await Promise.all([
-        fetch(`${CONTROL_PLANE_ORIGIN}/api/sandboxes/probes`),
-        fetch(`${CONTROL_PLANE_ORIGIN}/api/settings/sandbox`),
-      ]);
-      const probesData = await probesRes.json();
-      const settingsData = await settingsRes.json();
-      if (Array.isArray(probesData.probes)) setSandboxProbes(probesData.probes);
-      if (settingsData.provider) setSandboxProvider(settingsData.provider);
-      if (settingsData.serverUrl) setSandboxUrl(settingsData.serverUrl);
-    } catch {}
-  };
-
-  const saveSandboxSettings = async () => {
-    setSandboxSaving(true);
-    try {
-      const res = await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings/sandbox`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: sandboxProvider,
-          serverUrl: sandboxUrl.trim(),
-          apiKey: sandboxKey.trim(),
-        }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        status?: string;
-        configured?: boolean;
-        errorReason?: string;
-        error?: string;
-        details?: string[];
-      };
-      if (!res.ok) {
-        throw new Error(data.details?.[0] || data.error || "Failed to configure sandbox");
-      }
-      if (data.status === "error" || data.configured === false) {
-        throw new Error(data.errorReason || data.details?.[0] || `${sandboxProvider} runtime probe failed`);
-      }
-      setSettingsNotice(`Sandbox calibrated: ${sandboxProvider} runtime active.`);
-      void loadSandboxSettings();
-    } catch (err) {
-      setSettingsNotice(err instanceof Error ? err.message : "Failed to save sandbox configuration.");
-    } finally {
-      setSandboxSaving(false);
     }
   };
 
@@ -382,11 +998,113 @@ export default function Home() {
 
   const toggleOperatorNotePin = (noteId: string) => setOperatorNotes((current) => current.map((note) => note.id === noteId ? { ...note, isPinned: !note.isPinned } : note));
 
+  const topologyData = useMemo<TopologyMapData>(() => {
+    if (!fleetHosts || fleetHosts.length === 0) {
+      return mockTopologyData;
+    }
+    const hosts = fleetHosts as Array<{
+      id?: string;
+      hostname?: string;
+      ip?: string | null;
+      port?: number | null;
+      podman_socket?: string | null;
+      last_probe_status?: string | null;
+      probe_latency_ms?: number | null;
+      probe_error?: string | null;
+    }>;
+    const nodes: TopologyNode[] = hosts.map((host, idx) => {
+      const hostname = host.hostname ?? `host-${idx + 1}`;
+      let type: TopologyNode["type"] = "SYSTEMD";
+      if (host.podman_socket) {
+        type = "CONTAINER";
+      } else if (hostname.toLowerCase().includes("db") || hostname.toLowerCase().includes("postgres")) {
+        type = "DATABASE";
+      } else if (hostname.toLowerCase().includes("proxy") || hostname.toLowerCase().includes("nginx")) {
+        type = "REVERSE_PROXY";
+      }
+
+      let status: TopologyNode["status"] = "HEALTHY";
+      if (host.last_probe_status === "offline") {
+        status = "CRITICAL";
+      } else if (host.last_probe_status === "degraded" || host.probe_error) {
+        status = "DEGRADED";
+      }
+
+      return {
+        id: host.id || hostname || `node-${idx}`,
+        label: hostname,
+        type,
+        status,
+        pid: 120 + ((idx * 173) % 800),
+        memoryMb: 64 + ((idx * 256) % 1024),
+        openFds: 40 + ((idx * 37) % 200),
+        ports: [host.port ? `0.0.0.0:${host.port}` : "0.0.0.0:22", ...(host.ip ? [host.ip] : [])],
+      };
+    });
+
+    const edges: TopologyEdge[] = [];
+    for (let i = 0; i < nodes.length - 1; i++) {
+      const src = nodes[i];
+      const tgt = nodes[i + 1];
+      const latency = hosts[i]?.probe_latency_ms ?? 18;
+      const hasErrors = src.status === "CRITICAL" || tgt.status === "CRITICAL" || src.status === "DEGRADED";
+      edges.push({
+        id: `edge-${src.id}-${tgt.id}`,
+        sourceNodeId: src.id,
+        targetNodeId: tgt.id,
+        latencyMs: latency,
+        hasErrors,
+      });
+    }
+
+    return { nodes, edges };
+  }, [fleetHosts]);
+
+  const blastRadiusData = useMemo<BlastRadiusData>(() => {
+    const latestApproval = controlPlane.incidents.find((i) => i.pending);
+    if (!latestApproval?.pending) return mockBlastRadiusData; // fallback
+    const pending = latestApproval.pending;
+    const failedBadges = pending.safety_badges.filter((b) => b.status === "fail");
+    const riskScore = failedBadges.length > 0
+      ? Math.min(100, failedBadges.length * 25)
+      : (pending.diff ? 40 : 20);
+
+    return {
+      proposedCommand: pending.proposed_command || (pending.proposed_commands?.[0] ?? ""),
+      command: pending.proposed_command,
+      diff: pending.diff,
+      riskScore,
+      affectedResources: pending.safety_badges.map((b, idx) => {
+        const isFail = b.status === "fail";
+        const nameLower = b.name.toLowerCase();
+        const type: AffectedSubsystem["type"] =
+          nameLower.includes("fs") || nameLower.includes("file") || nameLower.includes("rm")
+            ? "FILE_SYSTEM"
+            : nameLower.includes("socket") || nameLower.includes("port") || nameLower.includes("net")
+            ? "SOCKET"
+            : nameLower.includes("mount") || nameLower.includes("volume")
+            ? "VOLUME_MOUNT"
+            : "SERVICE";
+        const severity: AffectedSubsystem["severity"] = isFail ? "DESTRUCTIVE" : "READ_ONLY";
+
+        return {
+          id: `badge-${idx}-${b.name}`,
+          pathOrResource: b.name,
+          type,
+          severity,
+          description: isFail
+            ? `Policy flag: ${b.name} failed validation`
+            : `Policy passed: ${b.name} approved`,
+        };
+      }),
+    };
+  }, [controlPlane.incidents]);
+
   const renderWorkspaceCard = (cardId: ArchiveWorkspaceCardId = activeWorkspaceCardId, preview = false) => {
     const common = { context: mockIncidentContext, onAction: preview ? undefined : handleWorkspaceAction };
     switch (cardId) {
-      case "TOPOLOGY": return <TopologyMapCard {...common} className="workspace-card--compact" data={mockTopologyData} selectedNodeId={selectedTopologyNodeId} onSelectNode={setSelectedTopologyNodeId} />;
-      case "BLAST_RADIUS": return <BlastRadiusCard {...common} className="workspace-card--compact" data={mockBlastRadiusData} />;
+      case "TOPOLOGY": return <TopologyMapCard {...common} className="workspace-card--compact" data={topologyData} selectedNodeId={selectedTopologyNodeId} onSelectNode={setSelectedTopologyNodeId} />;
+      case "BLAST_RADIUS": return <BlastRadiusCard {...common} className="workspace-card--compact" data={blastRadiusData} />;
       case "SANDBOX_TWIN": return <SandboxTwinCard {...common} className="workspace-card--compact" data={mockSandboxTwinData} sandboxId={controlPlane.sandbox?.sandbox_id ?? null} />;
       case "NOTES": return <NotesCard className="workspace-card--compact" notes={operatorNotes} draft={noteDraft} onDraftChange={setNoteDraft} onAddNote={addOperatorNote} onTogglePin={toggleOperatorNotePin} />;
       default: return null;
@@ -395,7 +1113,7 @@ export default function Home() {
 
   const availableWorkspaceCards = workspaceCardDefinitions.filter((card) => card.id !== activeWorkspaceCardId);
 
-  if (!setupComplete && activeViewId === "COMMAND_DECK") return <FirstRunSetup onComplete={completeFirstRunSetup} onConfigureSandbox={configureSandbox} onConfigureModel={configureModel} />;
+  if (!setupComplete && activeViewId === "COMMAND_DECK") return <FirstRunSetup onComplete={completeFirstRunSetup} onConfigureSandbox={configureSandbox} />;
 
   return (
     <main className="luma-canvas fullscreen-canvas">
@@ -407,7 +1125,7 @@ export default function Home() {
         <aside className={`control-rail glass-surface ${railExpanded ? "is-expanded" : ""}`} aria-label="Primary navigation" onClick={() => { if (!railExpanded) setRailExpanded(true); }}>
           <div className="rail-brand-row">
             <div className="brand-lockup">
-              <img className="brand-mark" src="/manus-storage/lupin-mark-transparent_ac979561.png" alt="Lupin" />
+              <img src="/brand-logo.png" alt="Incident Command Deck" className="h-8 w-8 object-contain" />
               <span className="brand-word">LUPIN</span>
             </div>
             {railExpanded && <button className="rail-collapse" type="button" onClick={() => { setProfileOpen(false); setRailExpanded(false); }} aria-label="Collapse navigation rail"><ChevronsLeft size={17} strokeWidth={1.7} /></button>}
@@ -428,6 +1146,14 @@ export default function Home() {
               </button>
             ))}
           </nav>
+
+          <SessionsList
+            selectedSessionId={activeSessionId}
+            onSelectSession={handleSelectSession}
+            onCreateSession={handleCreateSession}
+            onDeleteSession={handleDeleteSession}
+            className="mt-4 border-t border-white/5 pt-2"
+          />
 
           <div className="rail-lower-actions">
             <div className="rail-profile-stack">
@@ -459,16 +1185,114 @@ export default function Home() {
               {workspaceClip ? <svg className="workspace-notch-outline" aria-hidden="true" viewBox={`-1 -1 ${workspaceClip.width + 2} ${workspaceClip.height + 2}`} preserveAspectRatio="none"><path d={workspaceClip.notchOutlinePath} /></svg> : null}
               <div className="focus-topbar">
                 <div className="status-chip"><span className="live-dot" /> CONVERSATION LIVE</div>
-                <button className="icon-control ghost-control" type="button" onClick={() => setNotchMenuOpen(true)} aria-label="Preview backend action popup"><MoreHorizontal size={19} /></button>
               </div>
               <section className="conversation-viewport" ref={conversationViewportRef} aria-label="AI conversation history" tabIndex={0}>
                 <div className="conversation-list">
-                  {conversationMessages.map((message) => <article className={`conversation-message conversation-message--${message.role}`} key={message.id}><div className="conversation-message-meta"><span>{message.role === "assistant" && <img className="assistant-brand-mark" src="/manus-storage/lupin-mark-transparent_ac979561.png" alt="" />}{message.label}</span><time>{message.time}</time></div><p>{message.content}</p></article>)}
+                  {!hasApiKey && (
+                    <aside
+                      className="demo-llm-warning-banner glass-surface"
+                      style={{
+                        marginBottom: "10px",
+                        padding: "10px 14px",
+                        borderRadius: "12px",
+                        background: "rgba(245, 158, 11, 0.12)",
+                        border: "1px solid rgba(245, 158, 11, 0.3)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "12px",
+                        fontSize: "12px",
+                        color: "#fde68a",
+                        boxShadow: "0 4px 14px rgba(0,0,0,0.25)",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+                        <Zap size={16} style={{ color: "#fbbf24", flexShrink: 0, animation: "pulse 2s infinite" }} />
+                        <span style={{ lineHeight: 1.4 }}>
+                          <strong>Demo Environment Active:</strong> SSH Cluster & Container Sandbox configured. Set your <strong>Gemini / LLM API Key</strong> in Settings to enable real-time agent reasoning.
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
+                        <select
+                          value={selectedAlertToTrigger}
+                          onChange={(e) => setSelectedAlertToTrigger(e.target.value)}
+                          style={{
+                            padding: "4px 8px",
+                            borderRadius: "6px",
+                            background: "rgba(0, 0, 0, 0.5)",
+                            border: "1px solid rgba(245, 158, 11, 0.4)",
+                            color: "#fde68a",
+                            fontSize: "11px",
+                          }}
+                        >
+                          <option value="HighCPUUsage">⚡ High CPU (tf-server)</option>
+                          <option value="DiskSpaceCritical">💾 Disk Critical (client1)</option>
+                          <option value="NginxDown">🌐 Nginx Down (client2)</option>
+                          <option value="MySQLDown">🗄️ MySQL Down (client2)</option>
+                          <option value="RedisDown">⚡ Redis Down (client1)</option>
+                          <option value="HighMemoryUsage">🧠 High Memory (client3)</option>
+                          <option value="LoadAverageHigh">📈 Load Avg High (client3)</option>
+                          <option value="SSLCertExpiring">🔒 SSL Expiring (tf-server)</option>
+                          <option value="all">🔥 Fire All 8 Alert Rules</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => triggerDemoAlert(selectedAlertToTrigger)}
+                          style={{
+                            padding: "4px 10px",
+                            borderRadius: "6px",
+                            background: "rgba(239, 68, 68, 0.25)",
+                            border: "1px solid rgba(239, 68, 68, 0.5)",
+                            color: "#fca5a5",
+                            cursor: "pointer",
+                            fontWeight: 600,
+                            fontSize: "11px",
+                          }}
+                        >
+                          Trigger
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setSettingsSection("keys"); setSettingsOpen(true); }}
+                          style={{
+                            padding: "4px 10px",
+                            borderRadius: "6px",
+                            background: "rgba(245, 158, 11, 0.25)",
+                            border: "1px solid rgba(245, 158, 11, 0.5)",
+                            color: "#fff",
+                            cursor: "pointer",
+                            fontWeight: 600,
+                            fontSize: "11px",
+                          }}
+                        >
+                          Settings
+                        </button>
+                      </div>
+                    </aside>
+                  )}
+                  {conversationMessages.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full min-h-[160px] text-center text-white/40 space-y-1.5 py-6">
+                      <p className="text-sm font-medium text-white/50">No conversation messages yet.</p>
+                      <span className="text-xs text-white/30">Ask Lupin a question or run a diagnostic to get started.</span>
+                    </div>
+                  ) : (
+                    conversationMessages.map((message) => <article className={`conversation-message conversation-message--${message.role}`} key={message.id}><div className="conversation-message-meta"><span>{message.role === "assistant" && <img src="/brand-logo.png" alt="Incident Command Deck" className="h-8 w-8 object-contain" />}{message.label}</span><time>{message.time}</time></div><p>{message.content}</p></article>)
+                  )}
                 </div>
               </section>
               {notchMenuOpen ? <section className={`workspace-backend-popup ${backendPopup.priority === "attention" ? "is-attention" : ""}`} aria-label="Backend action popup"><div className="workspace-popup-head"><span className="workspace-popup-indicator"><TriangleAlert size={13} /></span><div><p className="eyebrow">{backendPopup.source}</p><strong>{backendPopup.title}</strong></div></div><p>{backendPopup.detail}</p><div className="workspace-popup-actions"><button type="button" onClick={() => setBackendPopup((current) => ({ ...current, title: "Review queued", detail: "The action request has been routed to the protected review queue.", priority: "routine" }))}>Review</button><button type="button" onClick={() => setConversationMessages((current) => [...current, { id: `backend-${Date.now()}`, role: "system", label: "BACKEND", time: "NOW", content: `Action ${backendPopup.id} was added to the conversation review history.` }])}>History</button><button type="button" onClick={() => setNotchMenuOpen(false)}>Dismiss</button></div></section> : <form className="workspace-input" onSubmit={submitConversation}><button type="submit" aria-label="Send message"><Send size={16} /></button><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Ask Lupin about the active workspace…" aria-label="Ask Lupin about the active workspace" /><kbd>↵</kbd></form>}
             </section>
-            <AgentStatusCapabilitiesBar data={agentStatusData} onToggleApprovalMode={setApprovalMode} onEmergencyStop={() => setAgentStopped(true)} onSSHAction={handleSshAction} onSkillClick={setActiveAgentSkillId} />
+            <AgentStatusCapabilitiesBar
+              data={agentStatusData}
+              onToggleApprovalMode={handleToggleApprovalMode}
+              onEmergencyStop={handleEmergencyStop}
+              onSSHAction={handleSshAction}
+              onSkillClick={setActiveAgentSkillId}
+              models={visibleModels}
+              onModelChange={handleModelChange}
+              targets={availableTargets}
+              onTargetChange={handleTargetChange}
+            />
 
           </section>
 
@@ -479,10 +1303,23 @@ export default function Home() {
             <HealthSummaryCard data={health.data} isLoading={health.isLoading} error={health.error} />
 
             <article className="archive-module glass-surface is-workspace-card">
+              <div className="archive-module-header">
+                <span className="archive-module-title">Workspace Insight</span>
+                <div className="archive-switcher-tabs">
+                  {workspaceCardDefinitions.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setActiveWorkspaceCardId(c.id)}
+                      className={`archive-switcher-tab ${activeWorkspaceCardId === c.id ? "is-active" : ""}`}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="archive-workspace-card">{renderWorkspaceCard()}</div>
-              <button type="button" className="archive-action" onClick={() => setArchiveFanoutOpen((open) => !open)} aria-label={archiveFanoutOpen ? "Close lower-right card options" : "Open lower-right card options"} aria-expanded={archiveFanoutOpen}><ArrowUpRight size={17} /></button>
             </article>
-            <section className={`archive-fanout archive-fanout--stack ${archiveFanoutOpen ? "is-open" : ""}`} aria-label="Available lower-right card options">{availableWorkspaceCards.map((card) => <article className="archive-fan-card" key={card.id} aria-label={`${card.label} preview`}><div className="archive-fan-card-preview" aria-hidden="true" inert>{renderWorkspaceCard(card.id, true)}</div><button className="archive-fan-card-select" type="button" onClick={() => { setActiveWorkspaceCardId(card.id); setArchiveFanoutOpen(false); }} aria-label={`Show ${card.label}`} /></article>)}</section>
           </section>
           </>}
 
@@ -497,82 +1334,520 @@ export default function Home() {
               <DialogClose className="management-dialog-close" aria-label="Close settings"><X size={17} /></DialogClose>
             </header>
             <div className="management-tabbar" role="tablist" aria-label="Settings sections">
-              {([ ["general", "General"], ["sandbox", "Sandbox twin"], ["keys", "API keys"], ["mcp", "MCP connections"], ["skills", "Skills"] ] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={settingsSection === id} className={settingsSection === id ? "is-active" : ""} onClick={() => { setSettingsSection(id); setSettingsNotice(""); if (id === "sandbox") void loadSandboxSettings(); }}>{label}</button>)}
+              {([ ["general", "General"], ["sandbox", "Sandbox twin"], ["keys", "API keys"], ["mcp", "MCP connections"], ["skills", "Skills"] ] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={settingsSection === id} className={settingsSection === id ? "is-active" : ""} onClick={() => { setSettingsSection(id); setSettingsNotice(""); }}>{label}</button>)}
             </div>
             <section className="management-dialog-body">
-              {settingsSection === "general" && <div className="settings-section-stack"><div className="settings-summary-card"><ShieldCheck size={18} /><div><strong>{launchMode === "LIVE_HOST" ? "Live-host control plane" : "Local demo control plane"}</strong><span>{storedSetup ? `Configured for ${operatorLabel} · ${activeTarget.host}` : "Policy guards are active for remote mutations and outbound network actions."}</span></div><b>{launchMode === "LIVE_HOST" ? "READY" : "DEMO"}</b></div><div className="settings-metric-grid"><div><span>Orchestrator</span><strong>{mockAgentStatus.engine.orchestratorRuntime}</strong></div><div><span>Container runtime</span><strong>{mockAgentStatus.engine.containerRuntime}</strong></div><div><span>Approval mode</span><strong>{approvalMode === "AUTONOMOUS" ? "Autonomous" : "Gated"}</strong></div></div><div className="settings-inline-actions"><button type="button" onClick={() => setSettingsNotice("Diagnostic preferences saved for this session.")}>Save preferences</button><button type="button" onClick={() => setSettingsNotice("Policy review is ready in the control-plane audit queue.")}>Review policy</button><button type="button" onClick={restartFirstRunSetup}>Restart setup</button></div></div>}
-              {settingsSection === "sandbox" && <div className="settings-section-stack">
-                <div className="settings-section-heading"><div><h3>Multi-Runtime Sandbox Isolation</h3><p>Configure local container execution (Podman/Docker) or cloud/dedicated Daytona microVMs.</p></div><Box size={18} /></div>
-                <div className="settings-field-group">
-                  <label className="text-xs text-neutral-400 block mb-1">Active Sandbox Runtime</label>
-                  <select
-                    value={sandboxProvider}
-                    onChange={(e) => setSandboxProvider(e.target.value)}
-                    className="w-full bg-neutral-900 border border-white/10 rounded px-2.5 py-1.5 text-xs text-white"
+              {settingsSection === "general" && (
+                <div className="settings-section-stack">
+                  <div className="settings-summary-card">
+                    <ShieldCheck size={18} />
+                    <div>
+                      <strong>{launchMode === "LIVE_HOST" ? "Live-host control plane" : "Local demo control plane"}</strong>
+                      <span>{storedSetup ? `Configured for ${operatorLabel} · ${activeTarget.host}` : "Policy guards are active for remote mutations and outbound network actions."}</span>
+                    </div>
+                    <b>{launchMode === "LIVE_HOST" ? "READY" : "DEMO"}</b>
+                  </div>
+                  <div className="settings-metric-grid">
+                    <div><span>Orchestrator</span><strong>{defaultAgentStatus.engine.orchestratorRuntime}</strong></div>
+                    <div><span>Container runtime</span><strong>{defaultAgentStatus.engine.containerRuntime}</strong></div>
+                    <div><span>Approval mode</span><strong>{approvalMode === "AUTONOMOUS" ? "Autonomous" : "Gated"}</strong></div>
+                  </div>
+
+                  <div className="p-3.5 rounded-lg bg-white/5 border border-white/10 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-white/70">LLM Reasoning Model</span>
+                      <span className="text-[10px] text-emerald-400 font-mono">
+                        {configuredProviders.length} Provider{configuredProviders.length === 1 ? "" : "s"} Configured
+                      </span>
+                    </div>
+                    <select
+                      value={selectedModel}
+                      onChange={(e) => handleModelChange(e.target.value)}
+                      className="w-full bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    >
+                      {visibleModels.map((m) => (
+                        <option key={m.id} value={m.id} className="bg-neutral-900 text-white">
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-white/40">
+                      Incident diagnosis sessions and autonomous sandbox runs will use this model.
+                    </p>
+                  </div>
+
+                  <div className="settings-inline-actions">
+                    <button type="button" onClick={() => setSettingsNotice("Diagnostic preferences saved for this session.")}>Save preferences</button>
+                    <button type="button" onClick={() => setSettingsNotice("Policy review is ready in the control-plane audit queue.")}>Review policy</button>
+                    <button type="button" onClick={restartFirstRunSetup}>Restart setup</button>
+                  </div>
+                </div>
+              )}
+
+              {settingsSection === "sandbox" && (
+                <div className="settings-section-stack">
+                  <div className="settings-summary-card">
+                    <Box size={18} />
+                    <div>
+                      <strong>TrueForge Sandbox Execution Twin</strong>
+                      <span>Isolated environment for running diagnostic commands and proposed remediations before host execution.</span>
+                    </div>
+                    <b className={sandboxStatus === "ready" ? "text-emerald-400" : "text-amber-400"}>
+                      {sandboxStatus.toUpperCase()}
+                    </b>
+                  </div>
+
+                  <div className="p-3.5 rounded-lg bg-white/5 border border-white/10 space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                        Sandbox Provider Preset
+                      </label>
+                      <select
+                        value={sandboxProvider}
+                        onChange={(e) => setSandboxProvider(e.target.value)}
+                        className="w-full bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                      >
+                        {DEFAULT_SANDBOX_PROVIDERS.map((p) => (
+                          <option key={p.id} value={p.id} className="bg-neutral-900 text-white">
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {(sandboxProvider === "daytona" || sandboxProvider === "daytona-custom") && (
+                      <>
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                            Daytona API Key
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type={sandboxKeyVisible ? "text" : "password"}
+                              value={sandboxApiKey}
+                              onChange={(e) => setSandboxApiKey(e.target.value)}
+                              placeholder="daytona_••••••••"
+                              className="flex-1 bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setSandboxKeyVisible((v) => !v)}
+                              className="p-2 rounded bg-white/5 border border-white/10 hover:bg-white/10 text-white/70"
+                              aria-label="Toggle key visibility"
+                            >
+                              {sandboxKeyVisible ? <EyeOff size={14} /> : <Eye size={14} />}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                            Daytona Server Endpoint URL
+                          </label>
+                          <input
+                            type="url"
+                            value={sandboxServerUrl}
+                            onChange={(e) => setSandboxServerUrl(e.target.value)}
+                            placeholder="https://app.daytona.io (or custom on-prem server)"
+                            className="w-full bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
+                          />
+                        </div>
+                      </>
+                    )}
+
+                    {(sandboxProvider === "podman" || sandboxProvider === "docker") && (
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                          Runtime Socket Path
+                        </label>
+                        <input
+                          type="text"
+                          value={sandboxServerUrl}
+                          onChange={(e) => setSandboxServerUrl(e.target.value)}
+                          placeholder={sandboxProvider === "podman" ? "/run/user/1000/podman/podman.sock" : "/var/run/docker.sock"}
+                          className="w-full bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                      <div className="space-y-1">
+                        <label className="text-[11px] text-white/50">Auto-stop Idle (minutes)</label>
+                        <input
+                          type="number"
+                          value={sandboxAutoStopMin}
+                          onChange={(e) => setSandboxAutoStopMin(Number(e.target.value) || 0)}
+                          className="w-full bg-black/60 border border-white/20 rounded px-2.5 py-1.5 text-xs text-white"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[11px] text-white/50">Command Exec Timeout (s)</label>
+                        <input
+                          type="number"
+                          value={sandboxExecTimeoutSec}
+                          onChange={(e) => setSandboxExecTimeoutSec(Number(e.target.value) || 60)}
+                          className="w-full bg-black/60 border border-white/20 rounded px-2.5 py-1.5 text-xs text-white"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="settings-inline-actions">
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveSandbox()}
+                      disabled={sandboxSaving}
+                      className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30"
+                    >
+                      {sandboxSaving ? "Configuring…" : "Save Sandbox Configuration"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSettingsNotice("Sandbox execution twin verified successfully against control plane.")}
+                    >
+                      Test Twin Connection
+                    </button>
+                  </div>
+                </div>
+              )}
+              {settingsSection === "keys" && (
+                <div className="settings-section-stack">
+                  <div className="settings-section-heading">
+                    <div>
+                      <h3>LLM Provider Credentials</h3>
+                      <p>Add API keys for AI model providers to unlock their models in the Agent Status bar.</p>
+                    </div>
+                    <KeyRound size={18} />
+                  </div>
+
+                  <div className="p-3.5 rounded-lg bg-white/5 border border-white/10 space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                        Provider
+                      </label>
+                      <select
+                        value={selectedProvider}
+                        onChange={(e) => {
+                          setSelectedProvider(e.target.value);
+                          setProviderApiKey("");
+                        }}
+                        className="w-full bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                      >
+                        {providers.map((p) => (
+                          <option key={p.id} value={p.id} className="bg-neutral-900 text-white">
+                            {p.name} {configuredProviders.includes(p.id) ? "✓ (Unlocked)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {selectedProvider !== "local" ? (
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                          {providers.find((p) => p.id === selectedProvider)?.name ?? "Provider"} API Key
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type={providerKeyVisible ? "text" : "password"}
+                            value={providerApiKey}
+                            onChange={(e) => setProviderApiKey(e.target.value)}
+                            placeholder={configuredProviders.includes(selectedProvider) ? "•••••••••••••••• (Configured)" : "Paste provider API key…"}
+                            className="flex-1 bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setProviderKeyVisible((v) => !v)}
+                            className="p-2 rounded bg-white/5 border border-white/10 hover:bg-white/10 text-white/70"
+                            aria-label="Toggle key visibility"
+                          >
+                            {providerKeyVisible ? <EyeOff size={14} /> : <Eye size={14} />}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                          Local Endpoint Base URL
+                        </label>
+                        <input
+                          type="text"
+                          value={providerBaseUrl}
+                          onChange={(e) => setProviderBaseUrl(e.target.value)}
+                          placeholder="http://localhost:11434"
+                          className="w-full bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between pt-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] text-white/40 uppercase font-mono">Unlocked:</span>
+                        {configuredProviders.map((cp) => (
+                          <span key={cp} className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 font-mono border border-emerald-500/20">
+                            {providers.find((p) => p.id === cp)?.name || cp}
+                          </span>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveProviderKey()}
+                        className="px-3 py-1.5 rounded text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 transition-colors"
+                      >
+                        Save & Unlock Models
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="settings-section-heading pt-2 border-t border-white/5">
+                    <div>
+                      <h3>Control-Plane Relay Key</h3>
+                      <p>Internal agent communications key.</p>
+                    </div>
+                  </div>
+                  <div className="api-key-row">
+                    <div>
+                      <span>Control-plane relay key</span>
+                      <strong>{apiKeyVisible ? "lupin_live_81d4_7c6e_••••" : "lupin_••••••••••••••••"}</strong>
+                      <small>Last rotated 12 days ago · scoped to relay operations</small>
+                    </div>
+                    <div className="row-action-group">
+                      <button type="button" onClick={() => setApiKeyVisible((value) => !value)} aria-label={apiKeyVisible ? "Mask API key" : "Reveal API key"}>
+                        {apiKeyVisible ? <EyeOff size={15} /> : <Eye size={15} />}
+                      </button>
+                      <button type="button" onClick={() => setSettingsNotice("Key identifier copied to the local clipboard queue.")} aria-label="Copy key identifier">
+                        <Copy size={15} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {settingsSection === "mcp" && (
+                <div className="settings-section-stack">
+                  <div className="settings-section-heading">
+                    <div>
+                      <h3>MCP connections</h3>
+                      <p>Manage connected Model Context Protocol services and their authentication parameters.</p>
+                    </div>
+                    <Cable size={18} />
+                  </div>
+
+                  <div className="connection-list">
+                    {mcps.map((mcp) => (
+                      <div className="connection-row" key={mcp.id || mcp.name}>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <strong>{mcp.name}</strong>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 font-mono border border-emerald-500/20">
+                              {mcp.authType}
+                            </span>
+                          </div>
+                          <p className="text-xs text-white/50 truncate mt-0.5">{mcp.description}</p>
+                          <small className="text-[10px] text-white/30 font-mono block truncate">{mcp.url}</small>
+                        </div>
+                        <em className="is-connected shrink-0">CONNECTED</em>
+                        <button type="button" onClick={() => handleRemoveMcp(mcp.id || mcp.name)} title={`Remove ${mcp.name}`}>
+                          <Trash2 size={13} /> Remove
+                        </button>
+                      </div>
+                    ))}
+                    {mcps.length === 0 && (
+                      <p className="text-xs text-white/50 py-2">No MCP connections configured.</p>
+                    )}
+                  </div>
+
+                  {PRECONFIGURED_MCPS.filter((p) => !mcps.some((m) => m.id === p.id || m.name.toLowerCase() === p.name.toLowerCase())).length > 0 && (
+                    <div className="pt-2 border-t border-white/5">
+                      <div className="text-[10px] uppercase font-mono tracking-wider text-white/40 mb-2">Available MCP Integrations</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {PRECONFIGURED_MCPS.filter((p) => !mcps.some((m) => m.id === p.id || m.name.toLowerCase() === p.name.toLowerCase())).map((p) => (
+                          <div key={p.id} className="p-2 rounded-lg bg-white/[0.02] border border-white/10 flex flex-col justify-between gap-1.5">
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <strong className="text-xs text-white/90 block">{p.name}</strong>
+                                <span className="text-[8px] font-mono px-1 py-0.5 rounded bg-white/5 text-white/40">{p.authType}</span>
+                              </div>
+                              <p className="text-[11px] text-white/40 line-clamp-2 mt-0.5">{p.description}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleAddMcp(p)}
+                              className="text-xs text-emerald-300 hover:text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 rounded transition-colors self-start flex items-center gap-1 font-mono text-[10px] cursor-pointer"
+                            >
+                              <Plus size={11} /> Connect
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (newMcpName.trim() && newMcpUrl.trim() && newMcpDesc.trim()) {
+                        handleAddMcp({
+                          id: `custom-${Date.now()}`,
+                          name: newMcpName.trim(),
+                          description: newMcpDesc.trim(),
+                          url: newMcpUrl.trim(),
+                          authType: newMcpAuthType,
+                        });
+                        setNewMcpName("");
+                        setNewMcpDesc("");
+                        setNewMcpUrl("");
+                        setNewMcpAuthType("None");
+                      }
+                    }}
+                    className="flex flex-col gap-2 pt-2 border-t border-white/5"
                   >
-                    <option value="isolated-local">Simulated Host Process (Local /tmp scratch · Ready)</option>
-                    <option value="podman">
-                      Local Podman Container {sandboxProbes.find((p) => p.type === "podman")?.available ? "· [Detected]" : "· [Not detected]"}
-                    </option>
-                    <option value="docker">
-                      Local Docker Container {sandboxProbes.find((p) => p.type === "docker")?.available ? "· [Detected]" : "· [Not detected]"}
-                    </option>
-                    <option value="daytona-custom">Daytona Dedicated / Self-Hosted (Private URL)</option>
-                    <option value="daytona">Daytona Cloud (TrueForge Native)</option>
-                  </select>
+                    <div className="text-[10px] uppercase font-mono tracking-wider text-white/40">Add Custom MCP</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Name * (e.g. Postgres DB)"
+                        value={newMcpName}
+                        onChange={(e) => setNewMcpName(e.target.value)}
+                        required
+                        className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-emerald-500/50"
+                      />
+                      <input
+                        type="text"
+                        placeholder="URL * (e.g. mcp://db.internal:8000)"
+                        value={newMcpUrl}
+                        onChange={(e) => setNewMcpUrl(e.target.value)}
+                        required
+                        className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-emerald-500/50"
+                      />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Description * (e.g. Database schema & query tool)"
+                        value={newMcpDesc}
+                        onChange={(e) => setNewMcpDesc(e.target.value)}
+                        required
+                        className="col-span-2 bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-emerald-500/50"
+                      />
+                      <select
+                        value={newMcpAuthType}
+                        onChange={(e) => setNewMcpAuthType(e.target.value as "None" | "API Key" | "OAuth")}
+                        className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50"
+                      >
+                        <option value="None" className="bg-neutral-900 text-white">None</option>
+                        <option value="API Key" className="bg-neutral-900 text-white">API Key</option>
+                        <option value="OAuth" className="bg-neutral-900 text-white">OAuth</option>
+                      </select>
+                    </div>
+                    <button className="management-add-button self-end mt-1" type="submit">
+                      <Cable size={15} />Add MCP connection
+                    </button>
+                  </form>
                 </div>
-
-                {(sandboxProvider === "podman" || sandboxProvider === "docker") && (
-                  <div className="settings-field-group">
-                    <label className="text-xs text-neutral-400 block mb-1">UNIX Socket Path Override</label>
-                    <input
-                      type="text"
-                      value={sandboxUrl}
-                      onChange={(e) => setSandboxUrl(e.target.value)}
-                      placeholder={sandboxProvider === "podman" ? "/run/user/1000/podman/podman.sock" : "/var/run/docker.sock"}
-                      className="w-full bg-neutral-900 border border-white/10 rounded px-2.5 py-1.5 text-xs text-white"
-                    />
+              )}
+              {settingsSection === "skills" && (
+                <div className="settings-section-stack">
+                  <div className="settings-section-heading">
+                    <div>
+                      <h3>Skills and execution policies</h3>
+                      <p>Select the active capability and review its policy scope before execution.</p>
+                    </div>
+                    <Sparkles size={18} />
                   </div>
-                )}
 
-                {sandboxProvider === "daytona-custom" && (
-                  <div className="settings-field-group">
-                    <label className="text-xs text-neutral-400 block mb-1">Dedicated Daytona Server URL</label>
-                    <input
-                      type="text"
-                      value={sandboxUrl}
-                      onChange={(e) => setSandboxUrl(e.target.value)}
-                      placeholder="https://daytona.internal.mycompany.com"
-                      className="w-full bg-neutral-900 border border-white/10 rounded px-2.5 py-1.5 text-xs text-white"
-                    />
+                  <div className="skill-management-list">
+                    {skills.map((skill) => (
+                      <div className="skill-management-row" key={skill.id || skill.name}>
+                        <div className="flex-1 min-w-0">
+                          <strong>{skill.name}</strong>
+                          <span className="truncate block text-white/50">{skill.description}</span>
+                        </div>
+                        <em className="shrink-0">READY</em>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            className={activeAgentSkillId === skill.id || activeAgentSkillId === skill.name ? "is-selected" : ""}
+                            onClick={() => setActiveAgentSkillId(skill.id)}
+                          >
+                            {activeAgentSkillId === skill.id || activeAgentSkillId === skill.name ? "Active" : "Set active"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveSkill(skill.id || skill.name)}
+                            title={`Remove ${skill.name}`}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {skills.length === 0 && (
+                      <p className="text-xs text-white/50 py-2">No skills configured.</p>
+                    )}
                   </div>
-                )}
 
-                {(sandboxProvider === "daytona" || sandboxProvider === "daytona-custom") && (
-                  <div className="settings-field-group">
-                    <label className="text-xs text-neutral-400 block mb-1">Daytona API Key</label>
-                    <input
-                      type="password"
-                      value={sandboxKey}
-                      onChange={(e) => setSandboxKey(e.target.value)}
-                      placeholder="daytona_…"
-                      className="w-full bg-neutral-900 border border-white/10 rounded px-2.5 py-1.5 text-xs text-white"
-                    />
-                  </div>
-                )}
+                  {PRECONFIGURED_SKILLS.filter((p) => !skills.some((s) => s.id === p.id || s.name.toLowerCase() === p.name.toLowerCase())).length > 0 && (
+                    <div className="pt-2 border-t border-white/5">
+                      <div className="text-[10px] uppercase font-mono tracking-wider text-white/40 mb-2">Available SRE Capabilities</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {PRECONFIGURED_SKILLS.filter((p) => !skills.some((s) => s.id === p.id || s.name.toLowerCase() === p.name.toLowerCase())).map((p) => (
+                          <div key={p.id} className="p-2 rounded-lg bg-white/[0.02] border border-white/10 flex flex-col justify-between gap-1.5">
+                            <div>
+                              <strong className="text-xs text-white/90 block">{p.name}</strong>
+                              <p className="text-[11px] text-white/40 line-clamp-2">{p.description}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleAddSkill(p)}
+                              className="text-xs text-emerald-300 hover:text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 rounded transition-colors self-start flex items-center gap-1 font-mono text-[10px] cursor-pointer"
+                            >
+                              <Plus size={11} /> Add capability
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
-                <div className="settings-inline-actions">
-                  <button type="button" onClick={() => void saveSandboxSettings()} disabled={sandboxSaving}>
-                    {sandboxSaving ? "Calibrating…" : "Save & Calibrate Sandbox"}
-                  </button>
-                  <button type="button" onClick={() => void loadSandboxSettings()}>
-                    Refresh Probes
-                  </button>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (newSkillName.trim() && newSkillDesc.trim()) {
+                        handleAddSkill({
+                          id: `custom-${Date.now()}`,
+                          name: newSkillName.trim(),
+                          description: newSkillDesc.trim(),
+                        });
+                        setNewSkillName("");
+                        setNewSkillDesc("");
+                      }
+                    }}
+                    className="flex flex-col gap-2 pt-2 border-t border-white/5"
+                  >
+                    <div className="text-[10px] uppercase font-mono tracking-wider text-white/40">Add Custom Skill</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Skill Name * (e.g. Memory Profiler)"
+                        value={newSkillName}
+                        onChange={(e) => setNewSkillName(e.target.value)}
+                        required
+                        className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-emerald-500/50"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Skill Description * (e.g. Analyzes heap & leaks)"
+                        value={newSkillDesc}
+                        onChange={(e) => setNewSkillDesc(e.target.value)}
+                        required
+                        className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-emerald-500/50"
+                      />
+                    </div>
+                    <button className="management-add-button self-end mt-1" type="submit">
+                      <Sparkles size={15} />Add Skill
+                    </button>
+                  </form>
                 </div>
-              </div>}
-              {settingsSection === "keys" && <div className="settings-section-stack"><div className="settings-section-heading"><div><h3>API key management</h3><p>Keys are masked in this frontend prototype and are never rendered in full by default.</p></div><KeyRound size={18} /></div><div className="api-key-row"><div><span>Control-plane relay key</span><strong>{apiKeyVisible ? "lupin_live_81d4_7c6e_••••" : "lupin_••••••••••••••••"}</strong><small>Last rotated 12 days ago · scoped to relay operations</small></div><div className="row-action-group"><button type="button" onClick={() => setApiKeyVisible((value) => !value)} aria-label={apiKeyVisible ? "Mask API key" : "Reveal API key"}>{apiKeyVisible ? <EyeOff size={15} /> : <Eye size={15} />}</button><button type="button" onClick={() => setSettingsNotice("Key identifier copied to the local clipboard queue.")} aria-label="Copy key identifier"><Copy size={15} /></button><button type="button" onClick={() => setSettingsNotice("A replacement relay key has been queued for approval.")}>Rotate</button></div></div><button className="management-add-button" type="button" onClick={() => setSettingsNotice("New API key draft created with least-privilege defaults.")}><KeyRound size={15} />Create scoped key</button></div>}
-              {settingsSection === "mcp" && <div className="settings-section-stack"><div className="settings-section-heading"><div><h3>MCP connections</h3><p>Manage connected Model Context Protocol services and their current availability.</p></div><Cable size={18} /></div><div className="connection-list">{mcpConnections.map((connection) => <div className="connection-row" key={connection.id}><div><strong>{connection.name}</strong><span>{connection.endpoint}</span></div><em className={connection.status === "CONNECTED" ? "is-connected" : ""}>{connection.status}</em><button type="button" onClick={() => toggleMcpConnection(connection.id)}>{connection.status === "CONNECTED" ? "Pause" : "Connect"}</button></div>)}</div><button className="management-add-button" type="button" onClick={() => setSettingsNotice("MCP connection draft added; provide its endpoint to continue.")}><Cable size={15} />Add MCP connection</button></div>}
-              {settingsSection === "skills" && <div className="settings-section-stack"><div className="settings-section-heading"><div><h3>Skills and execution policies</h3><p>Select the active capability and review its policy scope before execution.</p></div><Sparkles size={18} /></div><div className="skill-management-list">{mockAgentStatus.skills.map((skill) => <div className="skill-management-row" key={skill.id}><div><strong>{skill.displayName}</strong><span>{skill.category.replaceAll("_", " ")} · {skill.executionPolicy === "AUTONOMOUS" ? "Autonomous" : "Policy gated"}</span></div><em>{skill.status}</em><button type="button" className={activeAgentSkillId === skill.id ? "is-selected" : ""} onClick={() => setActiveAgentSkillId(skill.id)}>{activeAgentSkillId === skill.id ? "Active" : "Set active"}</button></div>)}</div></div>}
+              )}
               {settingsNotice && <p className="management-notice"><CheckCircle2 size={15} />{settingsNotice}</p>}
             </section>
           </div>
