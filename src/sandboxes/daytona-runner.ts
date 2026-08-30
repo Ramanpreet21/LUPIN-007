@@ -51,10 +51,10 @@ export class DaytonaRunner implements SandboxRunner {
     return { sandboxId: sessionId };
   }
 
-  async exec(_sandboxId: string, _command: string): Promise<SandboxExecResult> {
+  async exec(_sandboxId: string, command: string): Promise<SandboxExecResult> {
     return {
       exitCode: 0,
-      stdout: "Executed via TrueForge Daytona microVM",
+      stdout: `[${this.type}] Queued command for TrueForge Daytona microVM session: ${command}`,
       stderr: "",
       durationMs: 50,
     };

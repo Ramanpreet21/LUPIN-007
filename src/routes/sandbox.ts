@@ -121,38 +121,34 @@ export function createSandboxRouter({ getTf, logger, broadcast }: SandboxRouterO
     const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
     const serverUrl = typeof body.serverUrl === "string" ? body.serverUrl.trim() : "";
 
+    const VALID_PROVIDERS: SandboxType[] = ["daytona", "daytona-custom", "podman", "docker", "isolated-local"];
+    if (!VALID_PROVIDERS.includes(providerType)) {
+      res.status(400).json({ error: "invalid_payload", details: [`provider must be one of: ${VALID_PROVIDERS.join(", ")}`] });
+      return;
+    }
+
     // Require apiKey for Daytona Cloud or Dedicated
     if ((providerType === "daytona" || providerType === "daytona-custom" || !body.type) && !apiKey) {
       res.status(400).json({ error: "invalid_payload", details: ["apiKey must be a non-empty string"] });
       return;
     }
 
-    const client = getTf().client;
-    if ((providerType === "daytona" || providerType === "daytona-custom" || !body.type) && !client) {
-      res.status(503).json({ error: "trueforge_unconfigured" });
+    if (providerType === "daytona-custom" && !serverUrl) {
+      res.status(400).json({ error: "invalid_payload", details: ["serverUrl is required for daytona-custom"] });
       return;
     }
 
-    try {
-      const db = getDb();
-      const upsert = db.prepare("INSERT INTO settings (key, value) VALUES (@key, @value) ON CONFLICT(key) DO UPDATE SET value = @value");
-      upsert.run({ key: "sandbox_provider", value: providerType });
-      if (serverUrl) upsert.run({ key: "sandbox_url", value: serverUrl });
-      if (apiKey) upsert.run({ key: "sandbox_key", value: apiKey });
-    } catch {
-      // Fallback for test stubs
-    }
+    const client = getTf().client;
+    let configureResult: Record<string, unknown> | null = null;
 
-    broadcast?.({
-      type: "sandbox_provider_changed",
-      payload: { provider: providerType, serverUrl },
-    });
-
-    if (client && (providerType === "daytona" || providerType === "daytona-custom" || apiKey)) {
+    if (providerType === "daytona" || providerType === "daytona-custom") {
+      if (!client) {
+        res.status(503).json({ error: "trueforge_unconfigured" });
+        return;
+      }
       try {
         const result = await updateSandboxSettings(client.settings.sandboxProviders, apiKey, serverUrl);
-        res.json(result);
-        return;
+        configureResult = result as unknown as Record<string, unknown>;
       } catch (err) {
         const statusCode =
           typeof err === "object" && err !== null
@@ -169,6 +165,26 @@ export function createSandboxRouter({ getTf, logger, broadcast }: SandboxRouterO
         res.status(500).json({ error: "internal_error" });
         return;
       }
+    }
+
+    try {
+      const db = getDb();
+      const upsert = db.prepare("INSERT INTO settings (key, value) VALUES (@key, @value) ON CONFLICT(key) DO UPDATE SET value = @value");
+      upsert.run({ key: "sandbox_provider", value: providerType });
+      upsert.run({ key: "sandbox_url", value: serverUrl });
+      if (apiKey) upsert.run({ key: "sandbox_key", value: apiKey });
+    } catch {
+      // Fallback for test stubs
+    }
+
+    broadcast?.({
+      type: "sandbox_provider_changed",
+      payload: { provider: providerType, serverUrl },
+    });
+
+    if (configureResult) {
+      res.json({ ...configureResult, provider: providerType });
+      return;
     }
 
     res.json({ configured: true, status: "ready", provider: providerType });

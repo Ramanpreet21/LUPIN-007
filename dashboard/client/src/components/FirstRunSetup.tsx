@@ -175,7 +175,7 @@ export function FirstRunSetup({
   const [connectionCheck, setConnectionCheck] = useState<{ state: "idle" | "testing" | "success" | "error"; message: string }>({ state: "idle", message: "" });
   const { form, setForm, update, updateSsh, updateModelKey, updateNotifications } = useFirstRunFormState();
 
-  const API = import.meta.env.VITE_CONTROL_PLANE_ORIGIN ?? "";
+  const API = import.meta.env.VITE_CONTROL_PLANE_ORIGIN ?? "http://localhost:3000";
 
   // Auto-probe sandbox runtimes on mount
   useState(() => {
