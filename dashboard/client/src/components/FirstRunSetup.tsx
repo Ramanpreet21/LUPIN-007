@@ -84,11 +84,32 @@ const steps = [
 ] as const;
 
 const DEFAULT_MODELS = [
-  { id: "google-gemini/gemini-3-6-flash", name: "Gemini 3.6 Flash", provider: "Google" },
-  { id: "google-gemini/gemini-3-1-pro-preview", name: "Gemini 3.1 Pro Preview", provider: "Google" },
+  { id: "google-gemini/gemini-3-6-flash", name: "Gemini 3.6 Flash", provider: "Google Gemini" },
+  { id: "google-gemini/gemini-3-1-pro-preview", name: "Gemini 3.1 Pro Preview", provider: "Google Gemini" },
   { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5", provider: "Anthropic" },
-  { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4", provider: "Anthropic" },
-  { id: "local", name: "Local Model", provider: "Local" },
+  { id: "anthropic/claude-sonnet-4-6", name: "Claude Sonnet 4.6", provider: "Anthropic" },
+  { id: "anthropic/claude-opus-5", name: "Claude Opus 5", provider: "Anthropic" },
+  { id: "anthropic/claude-opus-4-8", name: "Claude Opus 4.8", provider: "Anthropic" },
+  { id: "anthropic/claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "Anthropic" },
+  { id: "anthropic/claude-fable-5", name: "Claude Fable 5", provider: "Anthropic" },
+  { id: "openai/gpt-5-6-terra", name: "GPT-5.6 Terra", provider: "OpenAI" },
+  { id: "openai/gpt-5-6-sol", name: "GPT-5.6 Sol", provider: "OpenAI" },
+  { id: "openai/gpt-5-6-luna", name: "GPT-5.6 Luna", provider: "OpenAI" },
+  { id: "openai/gpt-5-5", name: "GPT-5.5", provider: "OpenAI" },
+  { id: "openai/gpt-5-4-mini", name: "GPT-5.4 Mini", provider: "OpenAI" },
+  { id: "fireworks/deepseek-v4-pro", name: "DeepSeek V4 Pro", provider: "Fireworks" },
+  { id: "fireworks/kimi-k3", name: "Kimi K3", provider: "Fireworks" },
+  { id: "fireworks/glm-5p2", name: "GLM-5.2", provider: "Fireworks" },
+  { id: "fireworks/minimax-m3", name: "MiniMax M3", provider: "Fireworks" },
+  { id: "alibaba/qwen3-8-max", name: "Qwen 3.8 Max", provider: "Alibaba" },
+  { id: "alibaba/qwen3-7-max", name: "Qwen 3.7 Max", provider: "Alibaba" },
+  { id: "alibaba/qwen3-7-plus", name: "Qwen 3.7 Plus", provider: "Alibaba" },
+  { id: "alibaba/qwen3-7-flash", name: "Qwen 3.7 Flash", provider: "Alibaba" },
+  { id: "zai/glm-5-2", name: "GLM 5.2", provider: "Zhipu AI" },
+  { id: "zai/glm-5-turbo", name: "GLM 5 Turbo", provider: "Zhipu AI" },
+  { id: "moonshot/kimi-k3", name: "Kimi K3", provider: "Moonshot" },
+  { id: "moonshot/kimi-k2-7-code", name: "Kimi K2.7 Code", provider: "Moonshot" },
+  { id: "local", name: "Local Model (Ollama / vLLM)", provider: "Local" },
 ];
 
 const defaultFormState: FirstRunFormState = {
