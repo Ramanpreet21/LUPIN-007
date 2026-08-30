@@ -539,6 +539,16 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: modelId }),
       });
+      setConversationMessages((current) => [
+        ...current,
+        {
+          id: `sys-${Date.now()}`,
+          role: "system",
+          label: "SYSTEM",
+          time: "NOW",
+          content: `Active model switched to: ${modelId}. Next interactive turns and incident diagnoses will use this model.`,
+        },
+      ]);
     } catch (err) {
       console.error("Failed to switch model:", err);
     }

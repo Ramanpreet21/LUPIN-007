@@ -392,13 +392,18 @@ export function createIncidentRouter({
       const capturedState = await captureTargetState(alert.target_host, alert.service_name);
       const stateBlock = formatCapturedState(capturedState);
 
+      let activeModel = model;
+      try {
+        const row = getDb().prepare("SELECT value FROM settings WHERE key = 'model'").get() as { value?: string } | undefined;
+        if (row?.value) activeModel = row.value;
+      } catch { /* fallback */ }
+
       const { data } = await client.sessions.create({
         // SDK 0.1.3: sandbox mode and the responder prompt live on the agent
         // spec-body, not the name-ref (a named agent can't carry config/instructions).
-        // The model FQN comes from TRUEFORGE_MODEL; index.ts injects it (PR #4 4b).
         agent: {
           spec: {
-            model: { name: model },
+            model: { name: activeModel },
             instructions: INCIDENT_RESPONDER_PROMPT,
             config: { sandbox: { enabled: false } },
           },
