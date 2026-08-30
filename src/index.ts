@@ -9,6 +9,7 @@ import { createPolicyRouter } from "./routes/policy";
 import { createFleetRouter } from "./routes/fleet";
 import { createModelsRouter } from "./routes/models";
 import { createSettingsRouter } from "./routes/settings";
+import { createSessionsRouter } from "./routes/sessions";
 import { initDb } from "./db";
 
 const USAGE = `incident-agent - Incident Command Deck local control plane
@@ -97,6 +98,7 @@ async function main(): Promise<void> {
         app.use(createFleetRouter({ logger, broadcast }));
         app.use(createModelsRouter({ logger }));
         app.use(createSettingsRouter({ logger, broadcast }));
+        app.use(createSessionsRouter({ logger }));
       },
     });
   } catch (err) {
