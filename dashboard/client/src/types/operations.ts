@@ -34,6 +34,8 @@ export interface PolicyRule {
   reasonDescription: string;
   matchExpression: string;
   enabled: boolean;
+  name?: string;
+  regex?: string;
 }
 
 export interface ArchivedIncident {
@@ -71,5 +73,6 @@ export interface AstSimulation {
   command: string;
   riskScore: number;
   trippedNode: string;
-  nodes: Array<{ id: string; label: string; kind: string; risk: "low" | "medium" | "high" }>;
+  nodes: Array<{ id: string; label: string; kind: string; risk: "low" | "medium" | "high" | "critical" }>;
+  matchedRules?: PolicyRule[];
 }
