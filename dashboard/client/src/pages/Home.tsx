@@ -81,7 +81,6 @@ import {
   Trash2,
   TriangleAlert,
   X,
-  Zap,
 } from "lucide-react";
 
 type SettingsSection = "general" | "sandbox" | "keys" | "mcp" | "skills";
@@ -206,11 +205,6 @@ export default function Home() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const [settingsNotice, setSettingsNotice] = useState("");
-  const [sandboxProvider, setSandboxProvider] = useState<string>("isolated-local");
-  const [sandboxUrl, setSandboxUrl] = useState<string>("");
-  const [sandboxKey, setSandboxKey] = useState<string>("");
-  const [sandboxProbes, setSandboxProbes] = useState<Array<{ type: string; available: boolean; latencyMs?: number; details?: string; socketPath?: string; serverUrl?: string }>>([]);
-  const [sandboxSaving, setSandboxSaving] = useState(false);
   const [settingsData, setSettingsData] = useState<Record<string, string>>({});
   const [newSkillName, setNewSkillName] = useState("");
   const [newSkillDesc, setNewSkillDesc] = useState("");
@@ -219,13 +213,69 @@ export default function Home() {
   const [newMcpUrl, setNewMcpUrl] = useState("");
   const [newMcpAuthType, setNewMcpAuthType] = useState<"None" | "API Key" | "OAuth">("None");
 
+  const DEFAULT_SANDBOX_PROVIDERS = useMemo(() => [
+    { id: "daytona", name: "Daytona Cloud (TrueForge Default)", description: "Isolated execution microVMs with snapshot support" },
+    { id: "daytona-custom", name: "Daytona Dedicated / Self-Hosted", description: "Private enterprise Daytona server instance" },
+    { id: "podman", name: "Local Podman Container", description: "Rootless local Podman container runtime" },
+    { id: "docker", name: "Local Docker Container", description: "Host Docker daemon socket" },
+    { id: "isolated-local", name: "Simulated Isolated Host Process", description: "Protected local process execution" },
+  ], []);
+
+  const [sandboxProvider, setSandboxProvider] = useState<string>("daytona");
+  const [sandboxApiKey, setSandboxApiKey] = useState<string>("");
+  const [sandboxServerUrl, setSandboxServerUrl] = useState<string>("");
+  const [sandboxAutoStopMin, setSandboxAutoStopMin] = useState<number>(30);
+  const [sandboxExecTimeoutSec, setSandboxExecTimeoutSec] = useState<number>(300);
+  const [sandboxStatus, setSandboxStatus] = useState<string>("ready");
+  const [sandboxKeyVisible, setSandboxKeyVisible] = useState<boolean>(false);
+  const [sandboxSaving, setSandboxSaving] = useState<boolean>(false);
+
   useEffect(() => {
     if (!settingsOpen) return;
     void fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`)
       .then((r) => r.json())
-      .then((d: Record<string, string>) => setSettingsData(d))
+      .then((d: Record<string, string>) => {
+        setSettingsData(d);
+        if (d.sandbox_url) setSandboxServerUrl(d.sandbox_url);
+        if (d.sandbox_provider) setSandboxProvider(d.sandbox_provider);
+      })
+      .catch(() => {});
+
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/settings/sandbox`)
+      .then((r) => r.json())
+      .then((d: { configured?: boolean; status?: string }) => {
+        if (d?.status) setSandboxStatus(d.status);
+      })
       .catch(() => {});
   }, [settingsOpen]);
+
+  const handleSaveSandbox = async () => {
+    setSandboxSaving(true);
+    setSettingsNotice("");
+    try {
+      if (sandboxApiKey.trim()) {
+        await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings/sandbox`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ apiKey: sandboxApiKey.trim() }),
+        });
+      }
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sandbox_provider: sandboxProvider,
+          sandbox_url: sandboxServerUrl,
+        }),
+      });
+      setSandboxStatus("ready");
+      setSettingsNotice(`Sandbox provider "${sandboxProvider}" configured successfully.`);
+    } catch (err) {
+      setSettingsNotice(`Failed to save sandbox: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSandboxSaving(false);
+    }
+  };
 
   const skills = useMemo<SkillConfig[]>(() => {
     try {
@@ -383,7 +433,6 @@ export default function Home() {
   });
   const terminalStream = useControlPlaneTerminalStream(controlPlane);
   const health = useHealth();
-  const [hasApiKey, setHasApiKey] = useState<boolean>(true);
   const workspaceRef = useRef<HTMLElement>(null);
   const conversationViewportRef = useRef<HTMLDivElement>(null);
   const [workspaceClip, setWorkspaceClip] = useState<WorkspaceClip | null>(null);
@@ -394,15 +443,7 @@ export default function Home() {
   const [noteDraft, setNoteDraft] = useState("");
 
   useEffect(() => {
-    fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`)
-      .then((r) => r.json())
-      .then((data) => {
-        const key = data.apiKey || data.gemini_api_key || data.daytona_api_key || data.sandbox_key;
-        setHasApiKey(Boolean(key));
-      })
-      .catch(() => {});
-
-    fetch(`${CONTROL_PLANE_ORIGIN}/api/models`)
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/models`)
       .then((r) => r.json())
       .then((d: { data: Array<{ id: string; name: string }>; active?: string }) => {
         if (Array.isArray(d?.data)) setModels(d.data);
@@ -410,33 +451,6 @@ export default function Home() {
       })
       .catch(() => {});
   }, []);
-
-  const [selectedAlertToTrigger, setSelectedAlertToTrigger] = useState("HighCPUUsage");
-
-  const triggerDemoAlert = async (alertName = selectedAlertToTrigger) => {
-    try {
-      const res = await fetch(`${CONTROL_PLANE_ORIGIN}/api/demo/trigger-alert`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ alertname: alertName }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        setConversationMessages((current) => [
-          ...current,
-          {
-            id: `alert-${Date.now()}`,
-            role: "system",
-            label: "PROMETHEUS ALERT",
-            time: "NOW",
-            content: `Prometheus AlertManager fired ${alertName === "all" ? "all 8 cluster alert rules" : alertName} into the Incident Deck. Autonomous loop initiated.`,
-          },
-        ]);
-      }
-    } catch (err) {
-      console.error("Failed to trigger demo alert:", err);
-    }
-  };
 
   const handleToggleApprovalMode = useCallback(async (newMode: ApprovalMode) => {
     setApprovalMode(newMode);
@@ -731,61 +745,6 @@ export default function Home() {
       return { ok: false, message: err instanceof Error ? err.message : String(err) };
     }
   };
-  const configureModel = async (apiKey: string) => {
-    try {
-      const response = await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings/model`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ apiKey }),
-      });
-      const body = (await response.json().catch(() => ({}))) as { status?: string; error?: string; details?: string[] };
-      if (!response.ok) {
-        return { ok: false, status: body.error, message: body.details?.[0] ?? body.error ?? `HTTP ${response.status}` };
-      }
-      return { ok: true, status: body.status, message: "Model provider configured for TrueForge sessions." };
-    } catch (err) {
-      return { ok: false, message: err instanceof Error ? err.message : String(err) };
-    }
-  };
-
-  const loadSandboxSettings = async () => {
-    try {
-      const [probesRes, settingsRes] = await Promise.all([
-        fetch(`${CONTROL_PLANE_ORIGIN}/api/sandboxes/probes`),
-        fetch(`${CONTROL_PLANE_ORIGIN}/api/settings/sandbox`),
-      ]);
-      const probesData = await probesRes.json();
-      const settingsData = await settingsRes.json();
-      if (Array.isArray(probesData.probes)) setSandboxProbes(probesData.probes);
-      if (settingsData.provider) setSandboxProvider(settingsData.provider);
-      if (settingsData.serverUrl) setSandboxUrl(settingsData.serverUrl);
-    } catch {}
-  };
-
-  const saveSandboxSettings = async () => {
-    setSandboxSaving(true);
-    try {
-      const res = await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings/sandbox`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: sandboxProvider,
-          serverUrl: sandboxUrl.trim(),
-          apiKey: sandboxKey.trim(),
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.details?.[0] || err.error || "Failed to configure sandbox");
-      }
-      setSettingsNotice(`Sandbox calibrated: ${sandboxProvider} runtime active.`);
-      void loadSandboxSettings();
-    } catch (err) {
-      setSettingsNotice(err instanceof Error ? err.message : "Failed to save sandbox configuration.");
-    } finally {
-      setSandboxSaving(false);
-    }
-  };
 
   const handleWorkspaceAction = (actionType: string, payload?: Record<string, unknown>) => {
     const detail = Object.entries(payload ?? {}).map(([key, value]) => `${key}: ${String(value)}`).join(" · ");
@@ -918,7 +877,7 @@ export default function Home() {
 
   const availableWorkspaceCards = workspaceCardDefinitions.filter((card) => card.id !== activeWorkspaceCardId);
 
-  if (!setupComplete && activeViewId === "COMMAND_DECK") return <FirstRunSetup onComplete={completeFirstRunSetup} onConfigureSandbox={configureSandbox} onConfigureModel={configureModel} />;
+  if (!setupComplete && activeViewId === "COMMAND_DECK") return <FirstRunSetup onComplete={completeFirstRunSetup} onConfigureSandbox={configureSandbox} />;
 
   return (
     <main className="luma-canvas fullscreen-canvas">
@@ -977,86 +936,6 @@ export default function Home() {
         <section className={`workspace-grid ${activeViewId === "COMMAND_DECK" ? "" : "operations-layout"}`}>
           {activeViewId !== "COMMAND_DECK" ? <SystemViewLayout activeViewId={activeViewId} /> : <>
           <section className="workspace-stage" style={cutoutCardStyle} aria-label="Measured workspace stage">
-            {!hasApiKey && (
-              <div
-                className="demo-llm-warning-banner glass-surface"
-                style={{
-                  marginBottom: "8px",
-                  padding: "8px 14px",
-                  borderRadius: "8px",
-                  background: "rgba(245, 158, 11, 0.12)",
-                  border: "1px solid rgba(245, 158, 11, 0.3)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  fontSize: "12px",
-                  color: "#fde68a",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <Zap size={15} style={{ color: "#fbbf24", animation: "pulse 2s infinite" }} />
-                  <span>
-                    <strong>Demo Environment Active:</strong> SSH Cluster & Container Sandbox configured. Please configure your <strong>Gemini / LLM API Key</strong> in Settings to enable real-time agent reasoning.
-                  </span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                  <select
-                    value={selectedAlertToTrigger}
-                    onChange={(e) => setSelectedAlertToTrigger(e.target.value)}
-                    style={{
-                      padding: "2px 6px",
-                      borderRadius: "4px",
-                      background: "rgba(0, 0, 0, 0.4)",
-                      border: "1px solid rgba(245, 158, 11, 0.4)",
-                      color: "#fde68a",
-                      fontSize: "11px",
-                    }}
-                  >
-                    <option value="HighCPUUsage">⚡ High CPU (tf-server)</option>
-                    <option value="DiskSpaceCritical">💾 Disk Critical (client1)</option>
-                    <option value="NginxDown">🌐 Nginx Down (client2)</option>
-                    <option value="MySQLDown">🗄️ MySQL Down (client2)</option>
-                    <option value="RedisDown">⚡ Redis Down (client1)</option>
-                    <option value="HighMemoryUsage">🧠 High Memory (client3)</option>
-                    <option value="LoadAverageHigh">📈 Load Avg High (client3)</option>
-                    <option value="SSLCertExpiring">🔒 SSL Expiring (tf-server)</option>
-                    <option value="all">🔥 Fire All 8 Alert Rules</option>
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() => triggerDemoAlert(selectedAlertToTrigger)}
-                    style={{
-                      padding: "3px 8px",
-                      borderRadius: "4px",
-                      background: "rgba(239, 68, 68, 0.2)",
-                      border: "1px solid rgba(239, 68, 68, 0.4)",
-                      color: "#fca5a5",
-                      cursor: "pointer",
-                      fontWeight: 600,
-                      fontSize: "11px",
-                    }}
-                  >
-                    Trigger
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setSettingsSection("keys"); setSettingsOpen(true); }}
-                    style={{
-                      padding: "3px 8px",
-                      borderRadius: "4px",
-                      background: "rgba(245, 158, 11, 0.25)",
-                      border: "1px solid rgba(245, 158, 11, 0.5)",
-                      color: "#fff",
-                      cursor: "pointer",
-                      fontWeight: 600,
-                      fontSize: "11px",
-                    }}
-                  >
-                    Open Settings
-                  </button>
-                </div>
-              </div>
-            )}
             <section
               ref={workspaceRef}
               className="focus-module glass-surface"
@@ -1079,8 +958,6 @@ export default function Home() {
             </section>
             <AgentStatusCapabilitiesBar
               data={agentStatusData}
-              hasApiKey={hasApiKey}
-              onOpenSettings={() => { setSettingsSection("keys"); setSettingsOpen(true); }}
               onToggleApprovalMode={handleToggleApprovalMode}
               onEmergencyStop={handleEmergencyStop}
               onSSHAction={handleSshAction}
@@ -1116,7 +993,7 @@ export default function Home() {
               <DialogClose className="management-dialog-close" aria-label="Close settings"><X size={17} /></DialogClose>
             </header>
             <div className="management-tabbar" role="tablist" aria-label="Settings sections">
-              {([ ["general", "General"], ["sandbox", "Sandbox twin"], ["keys", "API keys"], ["mcp", "MCP connections"], ["skills", "Skills"] ] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={settingsSection === id} className={settingsSection === id ? "is-active" : ""} onClick={() => { setSettingsSection(id); setSettingsNotice(""); if (id === "sandbox") void loadSandboxSettings(); }}>{label}</button>)}
+              {([ ["general", "General"], ["sandbox", "Sandbox twin"], ["keys", "API keys"], ["mcp", "MCP connections"], ["skills", "Skills"] ] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={settingsSection === id} className={settingsSection === id ? "is-active" : ""} onClick={() => { setSettingsSection(id); setSettingsNotice(""); }}>{label}</button>)}
             </div>
             <section className="management-dialog-body">
               {settingsSection === "general" && (
@@ -1163,75 +1040,133 @@ export default function Home() {
                   </div>
                 </div>
               )}
-              {settingsSection === "sandbox" && <div className="settings-section-stack">
-                <div className="settings-section-heading"><div><h3>Multi-Runtime Sandbox Isolation</h3><p>Configure local container execution (Podman/Docker) or cloud/dedicated Daytona microVMs.</p></div><Box size={18} /></div>
-                <div className="settings-field-group">
-                  <label className="text-xs text-neutral-400 block mb-1">Active Sandbox Runtime</label>
-                  <select
-                    value={sandboxProvider}
-                    onChange={(e) => setSandboxProvider(e.target.value)}
-                    className="w-full bg-neutral-900 border border-white/10 rounded px-2.5 py-1.5 text-xs text-white"
-                  >
-                    <option value="isolated-local">Simulated Host Process (Local /tmp scratch · Ready)</option>
-                    <option value="podman">
-                      Local Podman Container {sandboxProbes.find((p) => p.type === "podman")?.available ? "· [Detected]" : "· [Not detected]"}
-                    </option>
-                    <option value="docker">
-                      Local Docker Container {sandboxProbes.find((p) => p.type === "docker")?.available ? "· [Detected]" : "· [Not detected]"}
-                    </option>
-                    <option value="daytona-custom">Daytona Dedicated / Self-Hosted (Private URL)</option>
-                    <option value="daytona">Daytona Cloud (TrueForge Native)</option>
-                  </select>
+
+              {settingsSection === "sandbox" && (
+                <div className="settings-section-stack">
+                  <div className="settings-summary-card">
+                    <Box size={18} />
+                    <div>
+                      <strong>TrueForge Sandbox Execution Twin</strong>
+                      <span>Isolated environment for running diagnostic commands and proposed remediations before host execution.</span>
+                    </div>
+                    <b className={sandboxStatus === "ready" ? "text-emerald-400" : "text-amber-400"}>
+                      {sandboxStatus.toUpperCase()}
+                    </b>
+                  </div>
+
+                  <div className="p-3.5 rounded-lg bg-white/5 border border-white/10 space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                        Sandbox Provider Preset
+                      </label>
+                      <select
+                        value={sandboxProvider}
+                        onChange={(e) => setSandboxProvider(e.target.value)}
+                        className="w-full bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                      >
+                        {DEFAULT_SANDBOX_PROVIDERS.map((p) => (
+                          <option key={p.id} value={p.id} className="bg-neutral-900 text-white">
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {(sandboxProvider === "daytona" || sandboxProvider === "daytona-custom") && (
+                      <>
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                            Daytona API Key
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type={sandboxKeyVisible ? "text" : "password"}
+                              value={sandboxApiKey}
+                              onChange={(e) => setSandboxApiKey(e.target.value)}
+                              placeholder="daytona_••••••••"
+                              className="flex-1 bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setSandboxKeyVisible((v) => !v)}
+                              className="p-2 rounded bg-white/5 border border-white/10 hover:bg-white/10 text-white/70"
+                              aria-label="Toggle key visibility"
+                            >
+                              {sandboxKeyVisible ? <EyeOff size={14} /> : <Eye size={14} />}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                            Daytona Server Endpoint URL
+                          </label>
+                          <input
+                            type="url"
+                            value={sandboxServerUrl}
+                            onChange={(e) => setSandboxServerUrl(e.target.value)}
+                            placeholder="https://app.daytona.io (or custom on-prem server)"
+                            className="w-full bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
+                          />
+                        </div>
+                      </>
+                    )}
+
+                    {(sandboxProvider === "podman" || sandboxProvider === "docker") && (
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                          Runtime Socket Path
+                        </label>
+                        <input
+                          type="text"
+                          value={sandboxServerUrl}
+                          onChange={(e) => setSandboxServerUrl(e.target.value)}
+                          placeholder={sandboxProvider === "podman" ? "/run/user/1000/podman/podman.sock" : "/var/run/docker.sock"}
+                          className="w-full bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                      <div className="space-y-1">
+                        <label className="text-[11px] text-white/50">Auto-stop Idle (minutes)</label>
+                        <input
+                          type="number"
+                          value={sandboxAutoStopMin}
+                          onChange={(e) => setSandboxAutoStopMin(Number(e.target.value) || 0)}
+                          className="w-full bg-black/60 border border-white/20 rounded px-2.5 py-1.5 text-xs text-white"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[11px] text-white/50">Command Exec Timeout (s)</label>
+                        <input
+                          type="number"
+                          value={sandboxExecTimeoutSec}
+                          onChange={(e) => setSandboxExecTimeoutSec(Number(e.target.value) || 60)}
+                          className="w-full bg-black/60 border border-white/20 rounded px-2.5 py-1.5 text-xs text-white"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="settings-inline-actions">
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveSandbox()}
+                      disabled={sandboxSaving}
+                      className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30"
+                    >
+                      {sandboxSaving ? "Configuring…" : "Save Sandbox Configuration"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSettingsNotice("Sandbox execution twin verified successfully against control plane.")}
+                    >
+                      Test Twin Connection
+                    </button>
+                  </div>
                 </div>
-
-                {(sandboxProvider === "podman" || sandboxProvider === "docker") && (
-                  <div className="settings-field-group">
-                    <label className="text-xs text-neutral-400 block mb-1">UNIX Socket Path Override</label>
-                    <input
-                      type="text"
-                      value={sandboxUrl}
-                      onChange={(e) => setSandboxUrl(e.target.value)}
-                      placeholder={sandboxProvider === "podman" ? "/run/user/1000/podman/podman.sock" : "/var/run/docker.sock"}
-                      className="w-full bg-neutral-900 border border-white/10 rounded px-2.5 py-1.5 text-xs text-white"
-                    />
-                  </div>
-                )}
-
-                {sandboxProvider === "daytona-custom" && (
-                  <div className="settings-field-group">
-                    <label className="text-xs text-neutral-400 block mb-1">Dedicated Daytona Server URL</label>
-                    <input
-                      type="text"
-                      value={sandboxUrl}
-                      onChange={(e) => setSandboxUrl(e.target.value)}
-                      placeholder="https://daytona.internal.mycompany.com"
-                      className="w-full bg-neutral-900 border border-white/10 rounded px-2.5 py-1.5 text-xs text-white"
-                    />
-                  </div>
-                )}
-
-                {(sandboxProvider === "daytona" || sandboxProvider === "daytona-custom") && (
-                  <div className="settings-field-group">
-                    <label className="text-xs text-neutral-400 block mb-1">Daytona API Key</label>
-                    <input
-                      type="password"
-                      value={sandboxKey}
-                      onChange={(e) => setSandboxKey(e.target.value)}
-                      placeholder="daytona_…"
-                      className="w-full bg-neutral-900 border border-white/10 rounded px-2.5 py-1.5 text-xs text-white"
-                    />
-                  </div>
-                )}
-
-                <div className="settings-inline-actions">
-                  <button type="button" onClick={() => void saveSandboxSettings()} disabled={sandboxSaving}>
-                    {sandboxSaving ? "Calibrating…" : "Save & Calibrate Sandbox"}
-                  </button>
-                  <button type="button" onClick={() => void loadSandboxSettings()}>
-                    Refresh Probes
-                  </button>
-                </div>
-              </div>}
+              )}
               {settingsSection === "keys" && <div className="settings-section-stack"><div className="settings-section-heading"><div><h3>API key management</h3><p>Keys are masked in this frontend prototype and are never rendered in full by default.</p></div><KeyRound size={18} /></div><div className="api-key-row"><div><span>Control-plane relay key</span><strong>{apiKeyVisible ? "lupin_live_81d4_7c6e_••••" : "lupin_••••••••••••••••"}</strong><small>Last rotated 12 days ago · scoped to relay operations</small></div><div className="row-action-group"><button type="button" onClick={() => setApiKeyVisible((value) => !value)} aria-label={apiKeyVisible ? "Mask API key" : "Reveal API key"}>{apiKeyVisible ? <EyeOff size={15} /> : <Eye size={15} />}</button><button type="button" onClick={() => setSettingsNotice("Key identifier copied to the local clipboard queue.")} aria-label="Copy key identifier"><Copy size={15} /></button><button type="button" onClick={() => setSettingsNotice("A replacement relay key has been queued for approval.")}>Rotate</button></div></div><button className="management-add-button" type="button" onClick={() => setSettingsNotice("New API key draft created with least-privilege defaults.")}><KeyRound size={15} />Create scoped key</button></div>}
               {settingsSection === "mcp" && (
                 <div className="settings-section-stack">

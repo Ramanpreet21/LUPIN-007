@@ -53,6 +53,7 @@ export interface FirstRunPreferences {
   ssh: SSHConfig;
   modelKeys: ModelKeysConfig;
   notifications: NotificationPreferences;
+  sandboxProvider?: string;
   sandboxUrl?: string;
   completedAt: string;
 }
@@ -67,8 +68,6 @@ export interface FirstRunSetupProps {
   onTestConnection?: (ssh: SSHConfig) => Promise<{ success: boolean; message: string }>;
   /** Configure the live sandbox provider (PR #4 4a) before the controlled flow needs it. */
   onConfigureSandbox?: (apiKey: string) => Promise<{ ok: boolean; status?: string; message: string }>;
-  /** Configure the model key for TrueForge sessions (PR #5 5a) before the controlled flow needs it. */
-  onConfigureModel?: (apiKey: string) => Promise<{ ok: boolean; status?: string; message: string }>;
   /** Runtime discovery text supplied by a future local agent bridge. */
   detectedRuntimeStatus?: string;
   className?: string;
@@ -82,6 +81,14 @@ const steps = [
   { id: "target", label: "Live host", icon: Computer },
   { id: "safeguards", label: "Safeguards", icon: LockKeyhole },
 ] as const;
+
+const DEFAULT_SANDBOX_PROVIDERS = [
+  { id: "daytona", name: "Daytona Cloud (TrueForge Default)", description: "Isolated execution microVMs with snapshot support" },
+  { id: "daytona-custom", name: "Daytona Dedicated / Self-Hosted", description: "Private enterprise Daytona server instance" },
+  { id: "podman", name: "Local Podman Container", description: "Rootless local Podman container runtime" },
+  { id: "docker", name: "Local Docker Container", description: "Host Docker daemon socket" },
+  { id: "isolated-local", name: "Simulated Isolated Host Process", description: "Protected local process execution" },
+];
 
 const DEFAULT_MODELS = [
   { id: "google-gemini/gemini-3-6-flash", name: "Gemini 3.6 Flash", provider: "Google Gemini" },
@@ -120,6 +127,7 @@ const defaultFormState: FirstRunFormState = {
   ssh: { targetHost: "192.168.1.104", sshPort: 22, userKeyPath: "~/.ssh/id_rsa" },
   modelKeys: { apiKey: "", localLlmEndpoint: "google-gemini/gemini-3-6-flash", baseUrl: "http://localhost:11434" },
   notifications: { enableDesktopAlerts: true, enableSoundAlerts: false },
+  sandboxProvider: "daytona",
   sandboxUrl: "",
 };
 
@@ -129,6 +137,7 @@ const demoFormState: FirstRunFormState = {
   launchMode: "DEMO_MOCK",
   ssh: { targetHost: "localhost", sshPort: 22, userKeyPath: "~/.ssh/id_rsa" },
   modelKeys: { apiKey: "", localLlmEndpoint: "google-gemini/gemini-3-6-flash", baseUrl: "http://localhost:11434" },
+  sandboxProvider: "daytona",
   sandboxUrl: "",
 };
 
@@ -194,7 +203,6 @@ export function FirstRunSetup({
   onComplete,
   onTestConnection,
   onConfigureSandbox,
-  onConfigureModel,
   detectedRuntimeStatus = "Podman socket: /run/user/1000/podman/podman.sock · READY",
   className = "",
 }: FirstRunSetupProps) {
@@ -203,30 +211,14 @@ export function FirstRunSetup({
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const [sandboxExpanded, setSandboxExpanded] = useState(false);
   const [sandboxVisible, setSandboxVisible] = useState(false);
-  const [sandboxProvider, setSandboxProvider] = useState<string>("isolated-local");
-  const [sandboxUrl, setSandboxUrl] = useState<string>("");
   const [sandboxKey, setSandboxKey] = useState("");
-  const [sandboxProbes, setSandboxProbes] = useState<Array<{ type: string; available: boolean; latencyMs?: number; details?: string; socketPath?: string }>>([]);
   const [sandboxCheck, setSandboxCheck] = useState<{ state: "idle" | "testing" | "success" | "error"; message: string }>({ state: "idle", message: "" });
-  const [modelCheck, setModelCheck] = useState<{ state: "idle" | "testing" | "success" | "error"; message: string }>({ state: "idle", message: "" });
   const [connectionCheck, setConnectionCheck] = useState<{ state: "idle" | "testing" | "success" | "error"; message: string }>({ state: "idle", message: "" });
   const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>(DEFAULT_MODELS);
   const { form, setForm, update, updateSsh, updateModelKey, updateNotifications } = useFirstRunFormState();
 
-  const API = import.meta.env.VITE_CONTROL_PLANE_ORIGIN ?? "http://localhost:3000";
-
   useEffect(() => {
-    fetch(`${API}/api/sandboxes/probes`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (Array.isArray(data.probes)) {
-          setSandboxProbes(data.probes);
-          if (data.activeProvider) setSandboxProvider(data.activeProvider);
-        }
-      })
-      .catch(() => {});
-
-    fetch(`${API}/api/models`)
+    void fetch(`${API}/api/models`)
       .then((r) => r.json())
       .then((data: { data: Array<{ id: string; name: string; provider: string }> }) => {
         if (Array.isArray(data?.data)) {
@@ -234,7 +226,7 @@ export function FirstRunSetup({
         }
       })
       .catch(() => {});
-  }, [API]);
+  }, []);
 
   const finishSetup = async (submitted: FirstRunFormState = form) => {
     const completedPreferences: FirstRunPreferences = { ...submitted, completedAt: new Date().toISOString() };
@@ -277,38 +269,9 @@ export function FirstRunSetup({
     onComplete(completedPreferences);
   };
 
-  const [demoLaunching, setDemoLaunching] = useState(false);
-  const [demoStatusText, setDemoStatusText] = useState("");
-
-  const launchDemo = async () => {
-    setDemoLaunching(true);
-    setDemoStatusText("Launching Docker Compose cluster & AlertManager…");
-    try {
-      const res = await fetch(`${API}/api/demo/start`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error || "Failed to start demo compose stack");
-      }
-      setDemoStatusText(`Cluster online (${data.engine}) · tf-server (:2222) and sandbox calibrated.`);
-      const demoState: FirstRunFormState = {
-        ...demoFormState,
-        ssh: {
-          targetHost: "localhost",
-          sshPort: 2222,
-          userKeyPath: "",
-        },
-      };
-      setForm(demoState);
-      setTimeout(() => {
-        finishSetup(demoState);
-      }, 600);
-    } catch (err) {
-      setDemoStatusText(`Notice: ${err instanceof Error ? err.message : String(err)}. Proceeding with simulated demo.`);
-      setTimeout(() => {
-        setForm(demoFormState);
-        finishSetup(demoFormState);
-      }, 1200);
-    }
+  const launchDemo = () => {
+    setForm(demoFormState);
+    void finishSetup(demoFormState);
   };
 
   const testConnection = async () => {
@@ -336,60 +299,26 @@ export function FirstRunSetup({
   };
 
   const saveSandbox = async () => {
-    setSandboxCheck({ state: "testing", message: "Probing and configuring sandbox…" });
+    if (!sandboxKey.trim()) return;
+    setSandboxCheck({ state: "testing", message: "Contacting the sandbox provider…" });
     try {
-      // 1. Probe specific runner
-      const probeRes = await fetch(`${API}/api/sandboxes/probe/${sandboxProvider}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          socketPath: sandboxUrl.trim(),
-          serverUrl: sandboxUrl.trim(),
-          apiKey: sandboxKey.trim(),
-        }),
-      });
-      const probeData = await probeRes.json();
-      if (!probeData.available && (sandboxProvider === "podman" || sandboxProvider === "docker" || sandboxProvider === "daytona-custom")) {
-        setSandboxCheck({
-          state: "error",
-          message: probeData.error || probeData.details || "Sandbox runner probe failed.",
-        });
-        return;
-      }
-
-      // 2. Persist
-      const res = await fetch(`${API}/api/settings/sandbox`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: sandboxProvider,
-          serverUrl: sandboxUrl.trim(),
-          apiKey: sandboxKey.trim(),
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.details?.[0] || err.error || "Failed to configure sandbox");
-      }
-      setSandboxCheck({
-        state: "success",
-        message: `${sandboxProvider} sandbox successfully calibrated and active.`,
-      });
+      const result = onConfigureSandbox
+        ? await onConfigureSandbox(sandboxKey.trim())
+        : await fetch(`${API}/api/settings/sandbox`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ apiKey: sandboxKey.trim() }),
+          }).then(async (res) => {
+            const body = (await res.json().catch(() => ({}))) as { status?: string; error?: string; details?: string[] };
+            if (!res.ok) {
+              return { ok: false, message: body.details?.[0] ?? body.error ?? `HTTP ${res.status}` };
+            }
+            return { ok: true, message: "Sandbox provider configured." };
+          });
+      setSandboxCheck({ state: result.ok ? "success" : "error", message: result.message });
     } catch (err) {
-      setSandboxCheck({
-        state: "error",
-        message: err instanceof Error ? err.message : "The sandbox test could not be completed.",
-      });
+      setSandboxCheck({ state: "error", message: err instanceof Error ? err.message : "The sandbox test could not be completed." });
     }
-  };
-  const saveModel = async () => {
-    const apiKey = form.modelKeys.apiKey?.trim();
-    if (!apiKey) return;
-    setModelCheck({ state: "testing", message: "Contacting the model provider…" });
-    const result = onConfigureModel
-      ? await onConfigureModel(apiKey)
-      : await new Promise<{ ok: boolean; message: string }>((resolve) => window.setTimeout(() => resolve({ ok: true, message: "Mock model key accepted for TrueForge sessions. A backend callback can replace this configure step." }), 650));
-    setModelCheck({ state: result.ok ? "success" : "error", message: result.message });
   };
 
   return (
@@ -413,19 +342,8 @@ export function FirstRunSetup({
             {step === 0 && <section className="setup-step-panel" aria-labelledby="setup-launch-title">
               <div className="setup-step-title"><span><Sparkles size={18} /></span><div><h1 id="setup-launch-title">Choose the first launch path.</h1><p>Open a local demo immediately, or prepare a live host with a callback-ready connection workflow.</p></div></div>
               <div className="setup-launch-options">
-                <button type="button" className="setup-launch-card setup-launch-card--demo" onClick={launchDemo} disabled={demoLaunching}>
-                  <span className="setup-option-icon"><Play size={16} /></span>
-                  <span>
-                    <strong>{demoLaunching ? "Initializing Demo Stack…" : "Launch Demo Mode"}</strong>
-                    <small>{demoStatusText || "Spins up multi-node Docker Compose cluster, AlertManager, and container sandbox."}</small>
-                  </span>
-                  <ChevronRight size={16} />
-                </button>
-                <button type="button" className={`setup-launch-card ${form.launchMode === "LIVE_HOST" ? "is-selected" : ""}`} onClick={() => update("launchMode", "LIVE_HOST")} disabled={demoLaunching}>
-                  <span className="setup-option-icon"><ShieldCheck size={16} /></span>
-                  <span><strong>Connect Live Host</strong><small>Configure SSH, local runtime, and the policy baseline.</small></span>
-                  <Check size={16} />
-                </button>
+                <button type="button" className="setup-launch-card setup-launch-card--demo" onClick={launchDemo}><span className="setup-option-icon"><Play size={16} /></span><span><strong>Launch Demo Mode</strong><small>Start against a local mock target with safe defaults.</small></span><ChevronRight size={16} /></button>
+                <button type="button" className={`setup-launch-card ${form.launchMode === "LIVE_HOST" ? "is-selected" : ""}`} onClick={() => update("launchMode", "LIVE_HOST")}><span className="setup-option-icon"><ShieldCheck size={16} /></span><span><strong>Connect Live Host</strong><small>Configure SSH, local runtime, and the policy baseline.</small></span><Check size={16} /></button>
               </div>
             </section>}
 
@@ -435,124 +353,84 @@ export function FirstRunSetup({
               <div className="setup-field-grid setup-target-fields"><label className="setup-field"><span>Target host or IP</span><input value={form.ssh.targetHost} onChange={(event) => updateSsh("targetHost", event.target.value)} placeholder="192.168.1.104" autoComplete="off" /></label><label className="setup-field"><span>SSH port</span><input value={String(form.ssh.sshPort)} onChange={(event) => updateSsh("sshPort", Number(event.target.value.replace(/\D/g, "")) || 22)} inputMode="numeric" placeholder="22" /></label></div>
               <label className="setup-field"><span>User / key path</span><input value={form.ssh.userKeyPath} onChange={(event) => updateSsh("userKeyPath", event.target.value)} placeholder="~/.ssh/id_rsa" autoComplete="off" /></label>
               <div className="setup-test-row"><button type="button" className="setup-test-button" onClick={() => void testConnection()} disabled={connectionCheck.state === "testing"}>{connectionCheck.state === "testing" ? "Testing connection…" : "Test connection"}</button>{connectionCheck.state !== "idle" && <span className={`setup-test-result is-${connectionCheck.state}`} aria-live="polite">{connectionCheck.message}</span>}</div>
-              <section className="setup-model-keys" aria-label="Model configuration">
-                <button type="button" className="setup-model-keys-trigger" onClick={() => setModelsExpanded((value) => !value)} aria-expanded={modelsExpanded}>
-                  <span><KeyRound size={15} /><strong>Model configuration</strong><small>Optional local session configuration</small></span>
-                  <ChevronDown size={15} />
-                </button>
-                {modelsExpanded && (
-                  <div className="setup-model-keys-body">
-                    <label className="setup-field">
-                      <span>API key</span>
-                      <span className="setup-secret-field">
-                        <input type={apiKeyVisible ? "text" : "password"} value={form.modelKeys.apiKey} onChange={(event) => updateModelKey("apiKey", event.target.value)} autoComplete="off" />
-                        <button type="button" onClick={() => setApiKeyVisible((value) => !value)} aria-label={apiKeyVisible ? "Hide API key" : "Show API key"}>{apiKeyVisible ? <EyeOff size={15} /> : <Eye size={15} />}</button>
-                      </span>
-                    </label>
-                    <label className="setup-field">
-                      <span>LLM model</span>
-                      <select value={form.modelKeys.localLlmEndpoint ?? ""} onChange={(e) => updateModelKey("localLlmEndpoint", e.target.value)} className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white/90">
-                        <option value="">Select model…</option>
-                        {models.map((m) => (<option key={m.id} value={m.id}>{m.name} ({m.provider})</option>))}
-                      </select>
-                    </label>
-                    {form.modelKeys.localLlmEndpoint === "local" && (
-                      <label className="setup-field">
-                        <span>Base URL</span>
-                        <input value={form.modelKeys.baseUrl ?? ""} onChange={(event) => updateModelKey("baseUrl", event.target.value)} placeholder="http://localhost:11434" autoComplete="off" />
-                      </label>
-                    )}
-                    <p className="setup-security-note"><LockKeyhole size={14} /><span><strong>Security note</strong> The API key remains in this tab's memory only and is excluded from local storage and telemetry.</span></p>
-                  </div>
-                )}
-              </section>
-              {modelsExpanded && (
-                <div className="setup-test-row">
-                  <button type="button" className="setup-test-button" onClick={() => void saveModel()} disabled={modelCheck.state === "testing"}>
-                    {modelCheck.state === "testing" ? "Configuring…" : "Save model key"}
-                  </button>
-                  {modelCheck.state !== "idle" && <span className={`setup-test-result is-${modelCheck.state}`} aria-live="polite">{modelCheck.message}</span>}
-                </div>
-              )}
+              <section className="setup-model-keys" aria-label="Model configuration"><button type="button" className="setup-model-keys-trigger" onClick={() => setModelsExpanded((value) => !value)} aria-expanded={modelsExpanded}><span><KeyRound size={15} /><strong>Model configuration</strong><small>Optional local session configuration</small></span><ChevronDown size={15} /></button>{modelsExpanded && <div className="setup-model-keys-body"><label className="setup-field"><span>API key</span><span className="setup-secret-field"><input type={apiKeyVisible ? "text" : "password"} value={form.modelKeys.apiKey} onChange={(event) => updateModelKey("apiKey", event.target.value)} autoComplete="off" /><button type="button" onClick={() => setApiKeyVisible((value) => !value)} aria-label={apiKeyVisible ? "Hide API key" : "Show API key"}>{apiKeyVisible ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label><label className="setup-field"><span>LLM model</span><select value={form.modelKeys.localLlmEndpoint ?? ""} onChange={(e) => updateModelKey("localLlmEndpoint", e.target.value)} className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white/90"><option value="">Select model…</option>{models.map((m) => (<option key={m.id} value={m.id}>{m.name} ({m.provider})</option>))}</select></label>{form.modelKeys.localLlmEndpoint === "local" && (<label className="setup-field"><span>Base URL</span><input value={form.modelKeys.baseUrl ?? ""} onChange={(event) => updateModelKey("baseUrl", event.target.value)} placeholder="http://localhost:11434" autoComplete="off" /></label>)}<p className="setup-security-note"><LockKeyhole size={14} /><span><strong>Security note</strong> The API key remains in this tab's memory only and is excluded from local storage and telemetry.</span></p></div>}</section>
 
               <section className="setup-model-keys" aria-label="Sandbox provider">
                 <button type="button" className="setup-model-keys-trigger" onClick={() => setSandboxExpanded((value) => !value)} aria-expanded={sandboxExpanded}>
-                  <span><Box size={15} /><strong>Sandbox execution runtime</strong><small>Select container or microVM isolation engine</small></span>
+                  <span><Box size={15} /><strong>Sandbox execution twin</strong><small>TrueForge container / microVM isolation</small></span>
                   <ChevronDown size={15} />
                 </button>
                 {sandboxExpanded && (
                   <div className="setup-model-keys-body">
                     <label className="setup-field">
-                      <span>Sandbox isolation type</span>
+                      <span>Sandbox provider</span>
                       <select
-                        value={sandboxProvider}
-                        onChange={(e) => setSandboxProvider(e.target.value)}
-                        className="bg-neutral-900 border border-white/10 rounded px-2.5 py-1.5 text-xs text-white"
+                        value={form.sandboxProvider ?? "daytona"}
+                        onChange={(e) => update("sandboxProvider", e.target.value)}
+                        className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white/90"
                       >
-                        <option value="isolated-local">Simulated Host Process (Local /tmp scratch · Ready)</option>
-                        <option value="podman">
-                          Local Podman Container {sandboxProbes.find((p) => p.type === "podman")?.available ? "· [Detected]" : "· [Not detected]"}
-                        </option>
-                        <option value="docker">
-                          Local Docker Container {sandboxProbes.find((p) => p.type === "docker")?.available ? "· [Detected]" : "· [Not detected]"}
-                        </option>
-                        <option value="daytona-custom">Daytona Dedicated / Self-Hosted (Private URL)</option>
-                        <option value="daytona">Daytona Cloud (TrueForge Native)</option>
+                        {DEFAULT_SANDBOX_PROVIDERS.map((p) => (
+                          <option key={p.id} value={p.id} className="bg-neutral-900 text-white">
+                            {p.name}
+                          </option>
+                        ))}
                       </select>
                     </label>
 
-                    {(sandboxProvider === "podman" || sandboxProvider === "docker") && (
-                      <label className="setup-field">
-                        <span>UNIX Socket Path (optional override)</span>
-                        <input
-                          value={sandboxUrl}
-                          onChange={(e) => setSandboxUrl(e.target.value)}
-                          placeholder={sandboxProvider === "podman" ? "/run/user/1000/podman/podman.sock" : "/var/run/docker.sock"}
-                          autoComplete="off"
-                        />
-                      </label>
-                    )}
-
-                    {sandboxProvider === "daytona-custom" && (
-                      <label className="setup-field">
-                        <span>Dedicated Daytona Server URL</span>
-                        <input
-                          value={sandboxUrl}
-                          onChange={(e) => setSandboxUrl(e.target.value)}
-                          placeholder="https://daytona.internal.mycompany.com"
-                          autoComplete="off"
-                        />
-                      </label>
-                    )}
-
-                    {(sandboxProvider === "daytona" || sandboxProvider === "daytona-custom") && (
-                      <label className="setup-field">
-                        <span>Daytona API Key</span>
-                        <span className="setup-secret-field">
+                    {(form.sandboxProvider === "daytona" || form.sandboxProvider === "daytona-custom" || !form.sandboxProvider) && (
+                      <>
+                        <label className="setup-field">
+                          <span>Daytona API key</span>
+                          <span className="setup-secret-field">
+                            <input
+                              type={sandboxVisible ? "text" : "password"}
+                              value={sandboxKey}
+                              onChange={(event) => setSandboxKey(event.target.value)}
+                              autoComplete="off"
+                              placeholder="daytona_…"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setSandboxVisible((value) => !value)}
+                              aria-label={sandboxVisible ? "Hide Daytona API key" : "Show Daytona API key"}
+                            >
+                              {sandboxVisible ? <EyeOff size={15} /> : <Eye size={15} />}
+                            </button>
+                          </span>
+                        </label>
+                        <div className="space-y-2">
+                          <label className="text-xs text-white/50 uppercase tracking-wider">Sandbox URL (Daytona Server)</label>
                           <input
-                            type={sandboxVisible ? "text" : "password"}
-                            value={sandboxKey}
-                            onChange={(event) => setSandboxKey(event.target.value)}
-                            autoComplete="off"
-                            placeholder="daytona_…"
+                            type="url"
+                            placeholder="https://app.daytona.io (or private URL)"
+                            value={form.sandboxUrl ?? ""}
+                            onChange={(e) => update("sandboxUrl", e.target.value)}
+                            className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white/90"
                           />
-                          <button type="button" onClick={() => setSandboxVisible((value) => !value)} aria-label={sandboxVisible ? "Hide Daytona API key" : "Show Daytona API key"}>
-                            {sandboxVisible ? <EyeOff size={15} /> : <Eye size={15} />}
-                          </button>
-                        </span>
-                      </label>
+                        </div>
+                      </>
+                    )}
+
+                    {(form.sandboxProvider === "podman" || form.sandboxProvider === "docker") && (
+                      <div className="space-y-2">
+                        <label className="text-xs text-white/50 uppercase tracking-wider">Container Socket Path</label>
+                        <input
+                          type="text"
+                          placeholder={form.sandboxProvider === "podman" ? "/run/user/1000/podman/podman.sock" : "/var/run/docker.sock"}
+                          value={form.sandboxUrl ?? ""}
+                          onChange={(e) => update("sandboxUrl", e.target.value)}
+                          className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white/90"
+                        />
+                      </div>
                     )}
 
                     <div className="setup-test-row">
                       <button type="button" className="setup-test-button" onClick={() => void saveSandbox()} disabled={sandboxCheck.state === "testing"}>
-                        {sandboxCheck.state === "testing" ? "Probing runtime…" : "Calibrate sandbox"}
+                        {sandboxCheck.state === "testing" ? "Configuring…" : "Save sandbox key"}
                       </button>
-                      {sandboxCheck.state !== "idle" && (
-                        <span className={`setup-test-result is-${sandboxCheck.state}`} aria-live="polite">
-                          {sandboxCheck.message}
-                        </span>
-                      )}
+                      {sandboxCheck.state !== "idle" && <span className={`setup-test-result is-${sandboxCheck.state}`} aria-live="polite">{sandboxCheck.message}</span>}
                     </div>
+                    <p className="setup-security-note"><LockKeyhole size={14} /><span><strong>Security note</strong> Sandbox credentials are sent securely to your local TrueForge control plane.</span></p>
                   </div>
                 )}
               </section>
