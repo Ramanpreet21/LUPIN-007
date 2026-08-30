@@ -185,6 +185,13 @@ export function useControlPlane(opts: UseControlPlaneOptions = {}): UseControlPl
       return;
     }
 
+    if (event.type === "session_created") {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("session_created", { detail: event }));
+      }
+      return;
+    }
+
     // Incident events need incident_id
     if (typeof event.incident_id !== "string") return;
     if (!event.payload || typeof event.payload !== "object") return;

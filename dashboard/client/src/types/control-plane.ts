@@ -40,6 +40,10 @@ export type ControlPlaneEvent =
       payload: { status: string; latency_ms: number };
     }
   | {
+      type: "session_created";
+      payload: { session_id: string; thread_id?: string; incident_id?: string };
+    }
+  | {
       type: "converse_thinking";
       session_id: string;
       payload: { content: string; step: number };

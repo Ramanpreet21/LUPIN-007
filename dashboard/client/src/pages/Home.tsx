@@ -21,6 +21,7 @@ import { mockAgentStatus } from "@/data/mockAgentStatus";
 import { useHealth } from "@/hooks/useHealth";
 import { mockBlastRadiusData, mockIncidentContext, mockSandboxTwinData, mockTopologyData, workspaceCardDefinitions } from "@/data/mockWorkspaceCards";
 import { IncidentDeck } from "@/components/IncidentDeck";
+import { SessionsList } from "@/components/SessionsList";
 import { CONTROL_PLANE_ORIGIN, useControlPlane } from "@/hooks/useControlPlane";
 import { useControlPlaneTerminalStream } from "@/hooks/useControlPlaneTerminalStream";
 import type { AgentStatusSummary, ApprovalMode, SSHStatus } from "@/types/agent-status";
@@ -636,6 +637,8 @@ export default function Home() {
               </button>
             ))}
           </nav>
+
+          <SessionsList className="mt-4 border-t border-white/5 pt-2" />
 
           <div className="rail-lower-actions">
             <div className="rail-profile-stack">
