@@ -14,7 +14,7 @@ type TurnStreamingEvent = TrueForgeApi.TurnStreamingEvent;
 type SandboxCreatedEvent = TrueForgeApi.SandboxCreatedEvent;
 import type { Logger } from "./logger";
 import type { TrueForgeHandle } from "./trueforge";
-import { INCIDENT_RESPONDER_PROMPT, SAFETY_POLICY } from "./trueforge-config";
+import { INCIDENT_RESPONDER_PROMPT, CONVERSATIONAL_ASSISTANT_PROMPT, SAFETY_POLICY } from "./trueforge-config";
 import { captureTargetState, formatCapturedState } from "./capture";
 import { formatScopedDiff } from "./command-scope";
 import {
@@ -804,7 +804,7 @@ export function createIncidentRouter({
             agent: {
               spec: {
                 model: { name: activeModel },
-                instructions: INCIDENT_RESPONDER_PROMPT,
+                instructions: CONVERSATIONAL_ASSISTANT_PROMPT,
                 config: { sandbox: { enabled: false } },
               },
             },
