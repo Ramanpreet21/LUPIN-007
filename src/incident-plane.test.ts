@@ -1002,3 +1002,63 @@ test("enforcement mode STRICT_GATED: broadcasts pending_approval and halts until
     await server.close();
   }
 });
+
+test("POST /converse rejects missing message with 400", async () => {
+  const fake = makeFakeHandle(completedStream(), []);
+  const server = await withServer(fake.handle);
+  try {
+    const res = await postJson(`http://127.0.0.1:${server.port}/converse`, JSON.stringify({}));
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error: string };
+    assert.equal(body.error, "missing_message");
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /converse streams thinking and complete events via WebSocket", async () => {
+  const t0 = new Date().toISOString();
+  const converseStream: TurnStreamingEvent[] = [
+    ev({ type: "turn.created", id: "t0", createdAt: t0, turnId: "turn-conv-1", threadId: "th-conv-1" }),
+    ev({
+      type: "model.message",
+      id: "m0",
+      createdAt: t0,
+      turnId: "turn-conv-1",
+      threadId: "th-conv-1",
+      content: "Analyzing the request.",
+    }),
+    ev({
+      type: "turn.done",
+      id: "d0",
+      createdAt: t0,
+      turnId: "turn-conv-1",
+      threadId: "th-conv-1",
+      state: { status: "done" },
+    }),
+  ];
+
+  const fake = makeFakeHandle(converseStream, []);
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    const res = await postJson(
+      `http://127.0.0.1:${server.port}/converse`,
+      JSON.stringify({ message: "Check nginx service status" }),
+    );
+    assert.equal(res.status, 202);
+    const body = (await res.json()) as { status: string; session_id: string };
+    assert.equal(body.status, "accepted");
+    assert.ok(body.session_id);
+
+    const thinking = await ws.waitFor("converse_thinking");
+    assert.equal(thinking.payload.content, "Analyzing the request.");
+
+    const complete = await ws.waitFor("converse_complete");
+    assert.equal(complete.payload.status, "done");
+    assert.equal(complete.payload.content, "Analyzing the request.");
+  } finally {
+    ws.close();
+    await server.close();
+  }
+});

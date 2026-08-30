@@ -289,7 +289,57 @@ export default function Home() {
     return () => window.removeEventListener("fleet_updated", handleFleetUpdated);
   }, [fetchFleetHosts]);
 
-  const controlPlane = useControlPlane({ onFleetUpdated: fetchFleetHosts });
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+
+  const handleConverseThinking = useCallback((content: string, _step: number) => {
+    setConversationMessages((current) => {
+      const last = current[current.length - 1];
+      if (last && last.role === "assistant" && last.id.startsWith("streaming-")) {
+        return [
+          ...current.slice(0, -1),
+          { ...last, content: `${last.content}\n${content}`.trim() },
+        ];
+      }
+      return [
+        ...current,
+        {
+          id: `streaming-${Date.now()}`,
+          role: "assistant",
+          label: "LUPIN",
+          time: "NOW",
+          content,
+        },
+      ];
+    });
+  }, []);
+
+  const handleConverseComplete = useCallback((content: string, status: "done" | "failed") => {
+    setConversationMessages((current) => {
+      const last = current[current.length - 1];
+      if (last && last.role === "assistant" && last.id.startsWith("streaming-")) {
+        return [
+          ...current.slice(0, -1),
+          { ...last, id: `lupin-${Date.now()}`, content: content || last.content },
+        ];
+      }
+      return [
+        ...current,
+        {
+          id: `lupin-${Date.now()}`,
+          role: "assistant",
+          label: "LUPIN",
+          time: "NOW",
+          content: content || (status === "done" ? "Action completed." : "Turn failed."),
+        },
+      ];
+    });
+  }, []);
+
+  const controlPlane = useControlPlane({
+    onFleetUpdated: fetchFleetHosts,
+    onConverseThinking: handleConverseThinking,
+    onConverseComplete: handleConverseComplete,
+  });
   const terminalStream = useControlPlaneTerminalStream(controlPlane);
   const health = useHealth();
   const workspaceRef = useRef<HTMLElement>(null);
@@ -477,12 +527,67 @@ export default function Home() {
     }
   }, [mcps]);
 
+  const handleCreateSession = useCallback(async () => {
+    try {
+      const res = await fetch(`${CONTROL_PLANE_ORIGIN}/api/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: selectedModel }),
+      });
+      if (res.ok) {
+        const session = (await res.json()) as { id: string; summary?: string };
+        setActiveSessionId(session.id);
+        setConversationMessages([
+          {
+            id: `sys-${Date.now()}`,
+            role: "system",
+            label: "SYSTEM",
+            time: "NOW",
+            content: `Started new TrueForge interactive session: ${session.id}`,
+          },
+        ]);
+      }
+    } catch (err) {
+      console.error("Failed to create new session:", err);
+    }
+  }, [selectedModel]);
+
+  const handleSelectSession = useCallback((sessionId: string) => {
+    setActiveSessionId(sessionId);
+    setConversationMessages([
+      {
+        id: `sys-${Date.now()}`,
+        role: "system",
+        label: "SYSTEM",
+        time: "NOW",
+        content: `Switched context to session: ${sessionId}`,
+      },
+    ]);
+  }, []);
+
   const submitConversation = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const message = draft.trim();
     if (!message) return;
-    setConversationMessages((current) => [...current, { id: `operator-${Date.now()}`, role: "user", label: "OPERATOR", time: "NOW", content: message }, { id: `lupin-${Date.now()}`, role: "assistant", label: "LUPIN", time: "NOW", content: "Request received. I have added it to the active conversation context and will surface any backend action that needs your review." }]);
+    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    setConversationMessages((current) => [
+      ...current,
+      { id: `operator-${Date.now()}`, role: "user", label: "OPERATOR", time, content: message },
+      { id: `streaming-${Date.now()}`, role: "assistant", label: "LUPIN", time, content: "Analyzing request with TrueForge..." },
+    ]);
     setDraft("");
+    void controlPlane.converse(message, activeSessionId ?? undefined).catch((err) => {
+      setConversationMessages((current) => [
+        ...current.filter((m) => !m.id.startsWith("streaming-")),
+        {
+          id: `err-${Date.now()}`,
+          role: "system",
+          label: "SYSTEM",
+          time: "NOW",
+          content: `Failed to dispatch to TrueForge: ${err instanceof Error ? err.message : String(err)}`,
+        },
+      ]);
+    });
   };
 
   useEffect(() => {
@@ -715,7 +820,12 @@ export default function Home() {
             ))}
           </nav>
 
-          <SessionsList className="mt-4 border-t border-white/5 pt-2" />
+          <SessionsList
+            selectedSessionId={activeSessionId}
+            onSelectSession={handleSelectSession}
+            onCreateSession={handleCreateSession}
+            className="mt-4 border-t border-white/5 pt-2"
+          />
 
           <div className="rail-lower-actions">
             <div className="rail-profile-stack">

@@ -873,5 +873,124 @@ export function createIncidentRouter({
     res.json({ status: "ok", cancelled });
   });
 
+  router.post(["/converse", "/api/converse"], async (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as { message?: unknown; session_id?: unknown };
+    const message = typeof body.message === "string" ? body.message.trim() : "";
+    let sessionId = typeof body.session_id === "string" ? body.session_id.trim() : undefined;
+
+    if (!message) {
+      res.status(400).json({ error: "missing_message" });
+      return;
+    }
+
+    const tf = getTf();
+    const client = tf.client;
+    const db = getDb();
+
+    let activeModel = model;
+    try {
+      const row = db.prepare("SELECT value FROM settings WHERE key = 'model'").get() as { value?: string } | undefined;
+      if (row?.value) activeModel = row.value;
+    } catch { /* fallback */ }
+
+    if (!client || tf.status.state !== "ready") {
+      res.status(503).json({ error: "trueforge_unconfigured" });
+      return;
+    }
+
+    if (!sessionId) {
+      try {
+        const { data } = await client.sessions.create({
+          agent: {
+            spec: {
+              model: { name: activeModel },
+              instructions: INCIDENT_RESPONDER_PROMPT,
+              config: { sandbox: { enabled: true } },
+            },
+          },
+        });
+        sessionId = data.id;
+
+        try {
+          db.prepare(
+            `INSERT INTO sessions (id, thread_id, incident_id, summary, created_at)
+             VALUES (@id, @thread_id, @incident_id, @summary, @created_at)`
+          ).run({
+            id: sessionId,
+            thread_id: null,
+            incident_id: null,
+            summary: message.slice(0, 40) + (message.length > 40 ? "…" : ""),
+            created_at: new Date().toISOString(),
+          });
+          broadcast({
+            type: "session_created",
+            payload: { session_id: sessionId, summary: message.slice(0, 40) },
+          });
+        } catch { /* ignore db error */ }
+      } catch (err) {
+        logger.error({ event: "converse_session_create_failed", err }, "Failed to create TrueForge session for converse");
+        res.status(502).json({ error: "session_creation_failed" });
+        return;
+      }
+    }
+
+    res.status(202).json({ status: "accepted", session_id: sessionId });
+
+    void (async () => {
+      const activeSession = sessionId!;
+      let fullResponse = "";
+      let step = 0;
+
+      try {
+        const stream = await client.sessions.createTurnStream(activeSession, {
+          input: [{ type: "user.message", content: message }],
+          previousTurnId: "none",
+        });
+
+        for await (const ev of stream) {
+          switch (ev.type) {
+            case "model.message": {
+              const msg = ev as ModelMessageEvent;
+              const text = textContent(msg.content) || msg.reasoningContent || "";
+              if (text) {
+                step += 1;
+                fullResponse += (fullResponse ? "\n" : "") + text;
+                broadcast({
+                  type: "converse_thinking",
+                  session_id: activeSession,
+                  payload: { content: text, step },
+                });
+              }
+              break;
+            }
+            case "turn.done": {
+              broadcast({
+                type: "converse_complete",
+                session_id: activeSession,
+                payload: { content: fullResponse || "Action completed.", status: "done" },
+              });
+              break;
+            }
+          }
+        }
+
+        if (fullResponse) {
+          broadcast({
+            type: "converse_complete",
+            session_id: activeSession,
+            payload: { content: fullResponse, status: "done" },
+          });
+        }
+      } catch (err) {
+        logger.error({ event: "converse_stream_error", err, sessionId: activeSession }, "Error streaming conversation turn");
+        broadcast({
+          type: "converse_complete",
+          session_id: activeSession,
+          payload: { content: err instanceof Error ? err.message : "Conversation error", status: "failed" },
+        });
+      }
+    })();
+  });
+
   return router;
 }

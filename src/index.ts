@@ -98,7 +98,7 @@ async function main(): Promise<void> {
         app.use(createFleetRouter({ logger, broadcast }));
         app.use(createModelsRouter({ logger }));
         app.use(createSettingsRouter({ logger, broadcast }));
-        app.use(createSessionsRouter({ logger }));
+        app.use(createSessionsRouter({ getTf: () => tf, logger, broadcast, model: config.trueforgeModel }));
       },
     });
   } catch (err) {

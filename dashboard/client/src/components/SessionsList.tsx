@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { GalleryVerticalEnd, Clock } from "lucide-react";
+import { GalleryVerticalEnd, Clock, Plus } from "lucide-react";
 
 const API = import.meta.env.VITE_CONTROL_PLANE_ORIGIN ?? "http://localhost:3000";
 
@@ -12,11 +12,18 @@ export interface SessionItem {
 }
 
 interface SessionsListProps {
+  selectedSessionId?: string | null;
   onSelectSession?: (sessionId: string) => void;
+  onCreateSession?: () => void;
   className?: string;
 }
 
-export function SessionsList({ onSelectSession, className }: SessionsListProps) {
+export function SessionsList({
+  selectedSessionId,
+  onSelectSession,
+  onCreateSession,
+  className,
+}: SessionsListProps) {
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -51,10 +58,24 @@ export function SessionsList({ onSelectSession, className }: SessionsListProps) 
           <GalleryVerticalEnd size={11} className="text-emerald-400/80" />
           Sessions
         </span>
-        <span className="text-[9px] text-white/30">{sessions.length}</span>
+        <div className="flex items-center gap-2">
+          {onCreateSession && (
+            <button
+              type="button"
+              onClick={onCreateSession}
+              className="flex items-center gap-1 text-[9px] text-emerald-400 hover:text-emerald-300 hover:bg-emerald-400/10 px-1.5 py-0.5 rounded transition-colors"
+              title="Start new conversation session"
+            >
+              <Plus size={10} />
+              <span>New</span>
+            </button>
+          )}
+          <span className="text-[9px] text-white/30">{sessions.length}</span>
+        </div>
       </div>
       <div className="space-y-1 px-1.5 max-h-48 overflow-y-auto scrollbar-thin">
         {sessions.map((s) => {
+          const isSelected = selectedSessionId === s.id;
           const formattedTime = s.created_at
             ? new Date(s.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
             : "";
@@ -62,9 +83,13 @@ export function SessionsList({ onSelectSession, className }: SessionsListProps) 
             <button
               key={s.id}
               onClick={() => onSelectSession?.(s.id)}
-              className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-white/70 hover:text-white hover:bg-white/10 transition-colors truncate flex flex-col gap-0.5 border border-transparent hover:border-white/10 group"
+              className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs transition-colors truncate flex flex-col gap-0.5 border group ${
+                isSelected
+                  ? "bg-emerald-400/15 border-emerald-400/30 text-emerald-200 shadow-[0_0_12px_rgba(108,243,201,0.12)]"
+                  : "text-white/70 hover:text-white hover:bg-white/10 border-transparent hover:border-white/10"
+              }`}
             >
-              <span className="truncate font-medium text-white/90 group-hover:text-emerald-300">
+              <span className={`truncate font-medium ${isSelected ? "text-emerald-300" : "text-white/90 group-hover:text-emerald-300"}`}>
                 {s.summary || `Session ${s.id.slice(0, 8)}`}
               </span>
               <div className="flex items-center gap-1.5 text-[9px] text-white/40 font-mono">
