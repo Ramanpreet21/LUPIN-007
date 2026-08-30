@@ -8,6 +8,7 @@ import { createIncidentRouter } from "./incident-plane";
 import { createSandboxRouter } from "./routes/sandbox";
 import { createDemoRouter } from "./routes/demo";
 import { createPolicyRouter } from "./routes/policy";
+import { createFleetRouter } from "./routes/fleet";
 import { createModelRouter } from "./routes/model";
 import { runTrueForgeSetup } from "./trueforge-setup";
 import { buildLocalMcpUrl } from "./mcp-provider";
@@ -98,6 +99,7 @@ async function main(): Promise<void> {
         app.use(createSandboxRouter({ getTf: () => tf, logger, broadcast }));
         app.use(createDemoRouter({ logger, broadcast, port: config.port }));
         app.use(createPolicyRouter({ logger }));
+        app.use(createFleetRouter({ logger, broadcast }));
         app.use(createModelRouter({ logger, getTf: () => tf, model: config.trueforgeModel, apiToken: config.controlPlaneApiToken }));
       },
     });
