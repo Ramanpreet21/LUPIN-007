@@ -22,9 +22,18 @@ scrape_configs:
 
   - job_name: 'client-nodes'
     static_configs:
-      - targets:
-          - 'client1-exporter:9100'
-          - 'client2-exporter:9100'
-          - 'client3-exporter:9100'
+      - targets: ['client1-exporter:9100']
         labels:
           group: 'clients'
+          host: 'client1'
+          instance: 'client1:22'
+      - targets: ['client2-exporter:9100']
+        labels:
+          group: 'clients'
+          host: 'client2'
+          instance: 'client2:22'
+      - targets: ['client3-exporter:9100']
+        labels:
+          group: 'clients'
+          host: 'client3'
+          instance: 'client3:22'

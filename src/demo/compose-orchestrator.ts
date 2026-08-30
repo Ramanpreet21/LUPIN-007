@@ -11,7 +11,8 @@ const execFileAsync = promisify(execFile);
 export interface ComposeEngine {
   binary: string;
   composeArgs: string[];
-  type: "docker" | "podman";
+  type: "docker" | "podman" | "none";
+  available?: boolean;
 }
 
 export interface DemoStatusResult {
@@ -29,34 +30,34 @@ export async function detectComposeEngine(): Promise<ComposeEngine> {
   if (podmanSocket.ok) {
     const podmanCli = await probeCliBinary("podman");
     if (podmanCli.ok) {
-      return { binary: "podman", composeArgs: ["compose"], type: "podman" };
+      return { binary: "podman", composeArgs: ["compose"], type: "podman", available: true };
     }
   }
 
   // Check Docker
   const dockerCli = await probeCliBinary("docker");
   if (dockerCli.ok) {
-    return { binary: "docker", composeArgs: ["compose"], type: "docker" };
+    return { binary: "docker", composeArgs: ["compose"], type: "docker", available: true };
   }
 
   // Fallback: Check podman CLI
   const podmanFallback = await probeCliBinary("podman");
   if (podmanFallback.ok) {
-    return { binary: "podman", composeArgs: ["compose"], type: "podman" };
+    return { binary: "podman", composeArgs: ["compose"], type: "podman", available: true };
   }
 
   // Fallback: Check podman-compose or docker-compose
   const podmanCompose = await probeCliBinary("podman-compose");
   if (podmanCompose.ok) {
-    return { binary: "podman-compose", composeArgs: [], type: "podman" };
+    return { binary: "podman-compose", composeArgs: [], type: "podman", available: true };
   }
 
   const dockerCompose = await probeCliBinary("docker-compose");
   if (dockerCompose.ok) {
-    return { binary: "docker-compose", composeArgs: [], type: "docker" };
+    return { binary: "docker-compose", composeArgs: [], type: "docker", available: true };
   }
 
-  return { binary: "docker", composeArgs: ["compose"], type: "docker" };
+  return { binary: "", composeArgs: [], type: "none", available: false };
 }
 
 async function waitForPort(host: string, port: number, timeoutMs = 10000): Promise<boolean> {
@@ -108,6 +109,15 @@ export async function startDemoStack(
   workspaceRoot = process.cwd()
 ): Promise<{ ok: boolean; engine: string; sshReady: boolean; error?: string }> {
   const engine = await detectComposeEngine();
+  if (engine.type === "none" || !engine.binary) {
+    return {
+      ok: false,
+      engine: "none",
+      sshReady: false,
+      error: "No container engine detected. Please install Docker or Podman.",
+    };
+  }
+
   const composeFile = resolveComposeFilePath(workspaceRoot);
 
   try {
@@ -139,7 +149,7 @@ export async function startDemoStack(
     };
   }
 
-  // Auto-register cluster fleet hosts into SQLite database
+  // Auto-register cluster fleet hosts into SQLite database transactionally
   try {
     const db = getDb();
     const insertHost = db.prepare(`
@@ -154,70 +164,76 @@ export async function startDemoStack(
         os_info = @os_info
     `);
 
-    const now = new Date().toISOString();
-
-    insertHost.run({
-      id: "node-server",
-      hostname: "localhost",
-      ip: "127.0.0.1",
-      port: 2222,
-      ssh_user: "root",
-      last_probe_status: "online",
-      os_info: "Alpine Linux (Gateway / Server)",
-      created_at: now,
-    });
-
-    insertHost.run({
-      id: "node-client1",
-      hostname: "client1",
-      ip: "127.0.0.1",
-      port: 2223,
-      ssh_user: "root",
-      last_probe_status: "online",
-      os_info: "Alpine Linux (Database / Redis)",
-      created_at: now,
-    });
-
-    insertHost.run({
-      id: "node-client2",
-      hostname: "client2",
-      ip: "127.0.0.1",
-      port: 2224,
-      ssh_user: "root",
-      last_probe_status: "online",
-      os_info: "Alpine Linux (Web / Apache / PHP)",
-      created_at: now,
-    });
-
-    insertHost.run({
-      id: "node-client3",
-      hostname: "client3",
-      ip: "127.0.0.1",
-      port: 2225,
-      ssh_user: "root",
-      last_probe_status: "online",
-      os_info: "Alpine Linux (App / Python / Node)",
-      created_at: now,
-    });
-
-    insertHost.run({
-      id: "node-attacker",
-      hostname: "attacker",
-      ip: "127.0.0.1",
-      port: 2226,
-      ssh_user: "root",
-      last_probe_status: "online",
-      os_info: "Alpine Linux (Security Auditor)",
-      created_at: now,
-    });
-
-    // Auto-configure sandbox provider in SQLite settings
     const upsertSetting = db.prepare(`
       INSERT INTO settings (key, value) VALUES (@key, @value)
       ON CONFLICT(key) DO UPDATE SET value = @value
     `);
-    upsertSetting.run({ key: "sandbox_provider", value: engine.type });
-    upsertSetting.run({ key: "launch_mode", value: "DEMO_MOCK" });
+
+    const registerClusterTx = db.transaction(() => {
+      const now = new Date().toISOString();
+
+      const hosts = [
+        {
+          id: "node-server",
+          hostname: "localhost",
+          ip: "127.0.0.1",
+          port: 2222,
+          ssh_user: "root",
+          last_probe_status: "online",
+          os_info: "Alpine Linux (Gateway / Server)",
+          created_at: now,
+        },
+        {
+          id: "node-client1",
+          hostname: "client1",
+          ip: "127.0.0.1",
+          port: 2223,
+          ssh_user: "root",
+          last_probe_status: "online",
+          os_info: "Alpine Linux (Database / Redis)",
+          created_at: now,
+        },
+        {
+          id: "node-client2",
+          hostname: "client2",
+          ip: "127.0.0.1",
+          port: 2224,
+          ssh_user: "root",
+          last_probe_status: "online",
+          os_info: "Alpine Linux (Web / Apache / PHP)",
+          created_at: now,
+        },
+        {
+          id: "node-client3",
+          hostname: "client3",
+          ip: "127.0.0.1",
+          port: 2225,
+          ssh_user: "root",
+          last_probe_status: "online",
+          os_info: "Alpine Linux (App / Python / Node)",
+          created_at: now,
+        },
+        {
+          id: "node-attacker",
+          hostname: "attacker",
+          ip: "127.0.0.1",
+          port: 2226,
+          ssh_user: "root",
+          last_probe_status: "online",
+          os_info: "Alpine Linux (Security Auditor)",
+          created_at: now,
+        },
+      ];
+
+      for (const h of hosts) {
+        insertHost.run(h);
+      }
+
+      upsertSetting.run({ key: "sandbox_provider", value: engine.type });
+      upsertSetting.run({ key: "launch_mode", value: "DEMO_MOCK" });
+    });
+
+    registerClusterTx();
 
     broadcast?.({
       type: "fleet_updated",
@@ -229,8 +245,12 @@ export async function startDemoStack(
       payload: { provider: engine.type },
     });
   } catch (err) {
-    // Database registration error
-    console.error("Failed to auto-register fleet hosts:", err);
+    return {
+      ok: false,
+      engine: engine.type,
+      sshReady: true,
+      error: `Failed to auto-register fleet hosts in database: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
 
   return {
@@ -242,6 +262,13 @@ export async function startDemoStack(
 
 export async function stopDemoStack(workspaceRoot = process.cwd()): Promise<{ ok: boolean; error?: string }> {
   const engine = await detectComposeEngine();
+  if (engine.type === "none" || !engine.binary) {
+    return {
+      ok: false,
+      error: "No container engine detected. Cannot stop compose stack.",
+    };
+  }
+
   const composeFile = resolveComposeFilePath(workspaceRoot);
 
   try {
@@ -258,6 +285,18 @@ export async function stopDemoStack(workspaceRoot = process.cwd()): Promise<{ ok
 
 export async function getDemoStatus(workspaceRoot = process.cwd()): Promise<DemoStatusResult> {
   const engine = await detectComposeEngine();
+  if (engine.type === "none" || !engine.binary) {
+    const sshReady = await waitForPort("127.0.0.1", 2222, 500);
+    return {
+      running: false,
+      engine: "none",
+      sshReady,
+      alertmanagerReady: false,
+      nodes: [],
+      error: "No container engine detected",
+    };
+  }
+
   const composeFile = resolveComposeFilePath(workspaceRoot);
 
   try {
@@ -391,22 +430,48 @@ export async function triggerDemoPrometheusAlert(
 ): Promise<{ ok: boolean; count?: number; incidentId?: string; error?: string }> {
   const selectedName = alertOverride?.alertname || "HighCPUUsage";
 
-  let itemsToFire = DEMO_ALERT_PRESETS.filter(
-    (p) => p.alertname.toLowerCase() === selectedName.toLowerCase()
-  );
+  let itemsToFire: Array<{
+    alertname: string;
+    severity: string;
+    instance: string;
+    host: string;
+    job: string;
+    summary: string;
+    description: string;
+  }> = [];
 
-  if (selectedName === "all" || itemsToFire.length === 0) {
-    itemsToFire = selectedName === "all" ? DEMO_ALERT_PRESETS : [
-      {
-        alertname: selectedName,
-        severity: alertOverride?.severity || "critical",
-        instance: "tf-server:2222",
-        host: "localhost",
-        job: "system",
-        summary: alertOverride?.summary || `${selectedName} detected on target host`,
-        description: alertOverride?.description || `Alert ${selectedName} triggered for demo verification.`,
-      },
-    ];
+  if (selectedName === "all") {
+    itemsToFire = DEMO_ALERT_PRESETS.map((p) => ({
+      ...p,
+      ...(alertOverride?.severity ? { severity: alertOverride.severity } : {}),
+      ...(alertOverride?.summary ? { summary: alertOverride.summary } : {}),
+      ...(alertOverride?.description ? { description: alertOverride.description } : {}),
+    }));
+  } else {
+    const matchedPresets = DEMO_ALERT_PRESETS.filter(
+      (p) => p.alertname.toLowerCase() === selectedName.toLowerCase()
+    );
+
+    if (matchedPresets.length > 0) {
+      itemsToFire = matchedPresets.map((preset) => ({
+        ...preset,
+        ...(alertOverride?.severity ? { severity: alertOverride.severity } : {}),
+        ...(alertOverride?.summary ? { summary: alertOverride.summary } : {}),
+        ...(alertOverride?.description ? { description: alertOverride.description } : {}),
+      }));
+    } else {
+      itemsToFire = [
+        {
+          alertname: selectedName,
+          severity: alertOverride?.severity || "critical",
+          instance: "tf-server:2222",
+          host: "localhost",
+          job: "system",
+          summary: alertOverride?.summary || `${selectedName} detected on target host`,
+          description: alertOverride?.description || `Alert ${selectedName} triggered for demo verification.`,
+        },
+      ];
+    }
   }
 
   const alertPayload = {

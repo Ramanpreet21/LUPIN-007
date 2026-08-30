@@ -63,7 +63,15 @@ services:
   client1-exporter:
     image: prom/node-exporter:latest
     container_name: tf-client1-exporter
+    pid: "service:client1"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
     command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
       - --collector.cpu
       - --collector.meminfo
       - --collector.filesystem
@@ -90,7 +98,15 @@ services:
   client2-exporter:
     image: prom/node-exporter:latest
     container_name: tf-client2-exporter
+    pid: "service:client2"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
     command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
       - --collector.cpu
       - --collector.meminfo
       - --collector.filesystem
@@ -117,7 +133,15 @@ services:
   client3-exporter:
     image: prom/node-exporter:latest
     container_name: tf-client3-exporter
+    pid: "service:client3"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
     command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
       - --collector.cpu
       - --collector.meminfo
       - --collector.filesystem
