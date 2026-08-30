@@ -1100,6 +1100,88 @@ export default function Home() {
               </div>
               <section className="conversation-viewport" ref={conversationViewportRef} aria-label="AI conversation history" tabIndex={0}>
                 <div className="conversation-list">
+                  {!hasApiKey && (
+                    <aside
+                      className="demo-llm-warning-banner glass-surface"
+                      style={{
+                        marginBottom: "10px",
+                        padding: "10px 14px",
+                        borderRadius: "12px",
+                        background: "rgba(245, 158, 11, 0.12)",
+                        border: "1px solid rgba(245, 158, 11, 0.3)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "12px",
+                        fontSize: "12px",
+                        color: "#fde68a",
+                        boxShadow: "0 4px 14px rgba(0,0,0,0.25)",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+                        <Zap size={16} style={{ color: "#fbbf24", flexShrink: 0, animation: "pulse 2s infinite" }} />
+                        <span style={{ lineHeight: 1.4 }}>
+                          <strong>Demo Environment Active:</strong> SSH Cluster & Container Sandbox configured. Set your <strong>Gemini / LLM API Key</strong> in Settings to enable real-time agent reasoning.
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
+                        <select
+                          value={selectedAlertToTrigger}
+                          onChange={(e) => setSelectedAlertToTrigger(e.target.value)}
+                          style={{
+                            padding: "4px 8px",
+                            borderRadius: "6px",
+                            background: "rgba(0, 0, 0, 0.5)",
+                            border: "1px solid rgba(245, 158, 11, 0.4)",
+                            color: "#fde68a",
+                            fontSize: "11px",
+                          }}
+                        >
+                          <option value="HighCPUUsage">⚡ High CPU (tf-server)</option>
+                          <option value="DiskSpaceCritical">💾 Disk Critical (client1)</option>
+                          <option value="NginxDown">🌐 Nginx Down (client2)</option>
+                          <option value="MySQLDown">🗄️ MySQL Down (client2)</option>
+                          <option value="RedisDown">⚡ Redis Down (client1)</option>
+                          <option value="HighMemoryUsage">🧠 High Memory (client3)</option>
+                          <option value="LoadAverageHigh">📈 Load Avg High (client3)</option>
+                          <option value="SSLCertExpiring">🔒 SSL Expiring (tf-server)</option>
+                          <option value="all">🔥 Fire All 8 Alert Rules</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => triggerDemoAlert(selectedAlertToTrigger)}
+                          style={{
+                            padding: "4px 10px",
+                            borderRadius: "6px",
+                            background: "rgba(239, 68, 68, 0.25)",
+                            border: "1px solid rgba(239, 68, 68, 0.5)",
+                            color: "#fca5a5",
+                            cursor: "pointer",
+                            fontWeight: 600,
+                            fontSize: "11px",
+                          }}
+                        >
+                          Trigger
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setSettingsSection("keys"); setSettingsOpen(true); }}
+                          style={{
+                            padding: "4px 10px",
+                            borderRadius: "6px",
+                            background: "rgba(245, 158, 11, 0.25)",
+                            border: "1px solid rgba(245, 158, 11, 0.5)",
+                            color: "#fff",
+                            cursor: "pointer",
+                            fontWeight: 600,
+                            fontSize: "11px",
+                          }}
+                        >
+                          Settings
+                        </button>
+                      </div>
+                    </aside>
+                  )}
                   {conversationMessages.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full min-h-[140px] text-center text-white/30 space-y-1">
                       <p className="text-xs">No conversation messages yet.</p>
