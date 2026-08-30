@@ -116,6 +116,63 @@ async function validateProviderApiKey(provider: string, apiKey: string, baseUrl?
       const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
       throw new Error(data?.error?.message || `Anthropic API key rejected (HTTP ${res.status})`);
     }
+  } else if (provider === "fireworks") {
+    const res = await fetch("https://api.fireworks.ai/inference/v1/models", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(5000),
+    }).catch((err) => {
+      throw new Error(`Unable to reach Fireworks API: ${err.message}`);
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+      throw new Error(data?.error?.message || `Fireworks API key rejected (HTTP ${res.status})`);
+    }
+  } else if (provider === "moonshot") {
+    const res = await fetch("https://api.moonshot.cn/v1/models", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(5000),
+    }).catch((err) => {
+      throw new Error(`Unable to reach Moonshot API: ${err.message}`);
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+      throw new Error(data?.error?.message || `Moonshot API key rejected (HTTP ${res.status})`);
+    }
+  } else if (provider === "zai") {
+    const res = await fetch("https://open.bigmodel.cn/api/paas/v4/models", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(5000),
+    }).catch((err) => {
+      throw new Error(`Unable to reach Zhipu AI API: ${err.message}`);
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: { message?: string }; message?: string };
+      throw new Error(data?.error?.message || data?.message || `Zhipu AI API key rejected (HTTP ${res.status})`);
+    }
+  } else if (provider === "alibaba") {
+    const res = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/models", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(5000),
+    }).catch((err) => {
+      throw new Error(`Unable to reach Alibaba DashScope API: ${err.message}`);
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+      throw new Error(data?.error?.message || `Alibaba API key rejected (HTTP ${res.status})`);
+    }
+  } else if (provider === "local") {
+    if (baseUrl) {
+      const probeUrl = `${baseUrl.replace(/\/+$/, "")}/v1/models`;
+      const res = await fetch(probeUrl, {
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+        signal: AbortSignal.timeout(3000),
+      }).catch((err) => {
+        throw new Error(`Unable to reach local endpoint at ${baseUrl}: ${err.message}`);
+      });
+      if (!res.ok) {
+        throw new Error(`Local model endpoint returned HTTP ${res.status}`);
+      }
+    }
   }
 }
 
