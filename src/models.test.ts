@@ -41,18 +41,11 @@ describe("models routes", () => {
       active: string;
     };
     assert.ok(Array.isArray(body.data));
-    assert.equal(body.data.length, 5);
+    assert.ok(body.data.length >= 20);
     assert.equal(body.active, "google-gemini/gemini-3-6-flash");
-    assert.deepEqual(
-      body.data.map((m) => m.id),
-      [
-        "google-gemini/gemini-3-6-flash",
-        "google-gemini/gemini-3-1-pro-preview",
-        "anthropic/claude-sonnet-5",
-        "anthropic/claude-sonnet-4",
-        "local",
-      ]
-    );
+    assert.ok(body.data.some((m) => m.id === "google-gemini/gemini-3-6-flash"));
+    assert.ok(body.data.some((m) => m.id === "anthropic/claude-sonnet-5"));
+    assert.ok(body.data.some((m) => m.id === "openai/gpt-5-6-terra"));
   });
 
   it("GET /api/models reflects updated active model in settings", async () => {

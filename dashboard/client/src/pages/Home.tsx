@@ -265,11 +265,32 @@ export default function Home() {
   const [agentStopped, setAgentStopped] = useState(false);
 
   const DEFAULT_MODELS = [
-    { id: "google-gemini/gemini-3-6-flash", name: "Gemini 3.6 Flash" },
-    { id: "google-gemini/gemini-3-1-pro-preview", name: "Gemini 3.1 Pro Preview" },
-    { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5" },
-    { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4" },
-    { id: "local", name: "Local Model" },
+    { id: "google-gemini/gemini-3-6-flash", name: "Gemini 3.6 Flash (Google)" },
+    { id: "google-gemini/gemini-3-1-pro-preview", name: "Gemini 3.1 Pro Preview (Google)" },
+    { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5 (Anthropic)" },
+    { id: "anthropic/claude-sonnet-4-6", name: "Claude Sonnet 4.6 (Anthropic)" },
+    { id: "anthropic/claude-opus-5", name: "Claude Opus 5 (Anthropic)" },
+    { id: "anthropic/claude-opus-4-8", name: "Claude Opus 4.8 (Anthropic)" },
+    { id: "anthropic/claude-haiku-4-5", name: "Claude Haiku 4.5 (Anthropic)" },
+    { id: "anthropic/claude-fable-5", name: "Claude Fable 5 (Anthropic)" },
+    { id: "openai/gpt-5-6-terra", name: "GPT-5.6 Terra (OpenAI)" },
+    { id: "openai/gpt-5-6-sol", name: "GPT-5.6 Sol (OpenAI)" },
+    { id: "openai/gpt-5-6-luna", name: "GPT-5.6 Luna (OpenAI)" },
+    { id: "openai/gpt-5-5", name: "GPT-5.5 (OpenAI)" },
+    { id: "openai/gpt-5-4-mini", name: "GPT-5.4 Mini (OpenAI)" },
+    { id: "fireworks/deepseek-v4-pro", name: "DeepSeek V4 Pro (Fireworks)" },
+    { id: "fireworks/kimi-k3", name: "Kimi K3 (Fireworks)" },
+    { id: "fireworks/glm-5p2", name: "GLM-5.2 (Fireworks)" },
+    { id: "fireworks/minimax-m3", name: "MiniMax M3 (Fireworks)" },
+    { id: "alibaba/qwen3-8-max", name: "Qwen 3.8 Max (Alibaba)" },
+    { id: "alibaba/qwen3-7-max", name: "Qwen 3.7 Max (Alibaba)" },
+    { id: "alibaba/qwen3-7-plus", name: "Qwen 3.7 Plus (Alibaba)" },
+    { id: "alibaba/qwen3-7-flash", name: "Qwen 3.7 Flash (Alibaba)" },
+    { id: "zai/glm-5-2", name: "GLM 5.2 (Zhipu AI)" },
+    { id: "zai/glm-5-turbo", name: "GLM 5 Turbo (Zhipu AI)" },
+    { id: "moonshot/kimi-k3", name: "Kimi K3 (Moonshot)" },
+    { id: "moonshot/kimi-k2-7-code", name: "Kimi K2.7 Code (Moonshot)" },
+    { id: "local", name: "Local Model (Ollama / vLLM)" },
   ];
 
   const [models, setModels] = useState<Array<{ id: string; name: string }>>(DEFAULT_MODELS);
