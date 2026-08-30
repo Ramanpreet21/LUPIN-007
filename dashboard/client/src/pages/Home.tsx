@@ -160,10 +160,25 @@ export default function Home() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const [settingsNotice, setSettingsNotice] = useState("");
-  const [mcpConnections, setMcpConnections] = useState([
-    { id: "mcp-relay", name: "Relay Control", endpoint: "wss://relay-04.lan/mcp", status: "CONNECTED" },
-    { id: "mcp-archive", name: "Archive Index", endpoint: "https://archive.lan/mcp", status: "PAUSED" },
-  ]);
+  const [settingsData, setSettingsData] = useState<Record<string, string>>({});
+  const [newSkillName, setNewSkillName] = useState("");
+  const [newMcpName, setNewMcpName] = useState("");
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`)
+      .then((r) => r.json())
+      .then((d: Record<string, string>) => setSettingsData(d))
+      .catch(() => {});
+  }, [settingsOpen]);
+
+  const skills = useMemo(() => {
+    try { return JSON.parse(settingsData.skills ?? "[]") as string[]; } catch { return []; }
+  }, [settingsData.skills]);
+
+  const mcps = useMemo(() => {
+    try { return JSON.parse(settingsData.mcps ?? "[]") as string[]; } catch { return []; }
+  }, [settingsData.mcps]);
   const [sshConnections, setSshConnections] = useState(() => [
     { id: "primary-target", hostname: storedSetup?.ssh.targetHost ?? "relay-04.lan", address: `SSH · ${storedSetup?.ssh.sshPort ?? 22}`, status: storedSetup?.launchMode === "LIVE_HOST" ? "READY" : "CONNECTED", latency: storedSetup?.launchMode === "LIVE_HOST" ? "—" : "1 ms" },
     { id: "staging-02", hostname: "staging-02.lan", address: "SSH · 22", status: "READY", latency: "16 ms" },
@@ -317,7 +332,73 @@ export default function Home() {
   );
   const handleSshAction = (action: "RECONNECT" | "CLEAR_SCROLLBACK" | "SPAWN_SUBSHELL") => { if (action === "RECONNECT") { setSshStatus("RECONNECTING"); window.setTimeout(() => setSshStatus("CONNECTED"), 750); } };
   const addSshConnection = () => setSshConnections((current) => [...current, { id: `node-${current.length + 1}`, hostname: `node-${current.length + 1}.lan`, address: "SSH · 22", status: "DRAFT", latency: "—" }]);
-  const toggleMcpConnection = (id: string) => setMcpConnections((current) => current.map((connection) => connection.id === id ? { ...connection, status: connection.status === "CONNECTED" ? "PAUSED" : "CONNECTED" } : connection));
+  const handleAddSkill = useCallback(async (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed || skills.includes(trimmed)) return;
+    const updated = [...skills, trimmed];
+    const raw = JSON.stringify(updated);
+    setSettingsData((prev) => ({ ...prev, skills: raw }));
+    try {
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skills: raw }),
+      });
+      setSettingsNotice(`Skill "${trimmed}" added.`);
+    } catch (err) {
+      console.error("Failed to add skill:", err);
+    }
+  }, [skills]);
+
+  const handleRemoveSkill = useCallback(async (name: string) => {
+    const updated = skills.filter((s) => s !== name);
+    const raw = JSON.stringify(updated);
+    setSettingsData((prev) => ({ ...prev, skills: raw }));
+    try {
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skills: raw }),
+      });
+      setSettingsNotice(`Skill "${name}" removed.`);
+    } catch (err) {
+      console.error("Failed to remove skill:", err);
+    }
+  }, [skills]);
+
+  const handleAddMcp = useCallback(async (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed || mcps.includes(trimmed)) return;
+    const updated = [...mcps, trimmed];
+    const raw = JSON.stringify(updated);
+    setSettingsData((prev) => ({ ...prev, mcps: raw }));
+    try {
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mcps: raw }),
+      });
+      setSettingsNotice(`MCP connection "${trimmed}" added.`);
+    } catch (err) {
+      console.error("Failed to add MCP:", err);
+    }
+  }, [mcps]);
+
+  const handleRemoveMcp = useCallback(async (name: string) => {
+    const updated = mcps.filter((m) => m !== name);
+    const raw = JSON.stringify(updated);
+    setSettingsData((prev) => ({ ...prev, mcps: raw }));
+    try {
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mcps: raw }),
+      });
+      setSettingsNotice(`MCP connection "${name}" removed.`);
+    } catch (err) {
+      console.error("Failed to remove MCP:", err);
+    }
+  }, [mcps]);
   const submitConversation = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const message = draft.trim();
@@ -624,8 +705,117 @@ export default function Home() {
             <section className="management-dialog-body">
               {settingsSection === "general" && <div className="settings-section-stack"><div className="settings-summary-card"><ShieldCheck size={18} /><div><strong>{launchMode === "LIVE_HOST" ? "Live-host control plane" : "Local demo control plane"}</strong><span>{storedSetup ? `Configured for ${operatorLabel} · ${activeTarget.host}` : "Policy guards are active for remote mutations and outbound network actions."}</span></div><b>{launchMode === "LIVE_HOST" ? "READY" : "DEMO"}</b></div><div className="settings-metric-grid"><div><span>Orchestrator</span><strong>{mockAgentStatus.engine.orchestratorRuntime}</strong></div><div><span>Container runtime</span><strong>{mockAgentStatus.engine.containerRuntime}</strong></div><div><span>Approval mode</span><strong>{approvalMode === "AUTONOMOUS" ? "Autonomous" : "Gated"}</strong></div></div><div className="settings-inline-actions"><button type="button" onClick={() => setSettingsNotice("Diagnostic preferences saved for this session.")}>Save preferences</button><button type="button" onClick={() => setSettingsNotice("Policy review is ready in the control-plane audit queue.")}>Review policy</button><button type="button" onClick={restartFirstRunSetup}>Restart setup</button></div></div>}
               {settingsSection === "keys" && <div className="settings-section-stack"><div className="settings-section-heading"><div><h3>API key management</h3><p>Keys are masked in this frontend prototype and are never rendered in full by default.</p></div><KeyRound size={18} /></div><div className="api-key-row"><div><span>Control-plane relay key</span><strong>{apiKeyVisible ? "lupin_live_81d4_7c6e_••••" : "lupin_••••••••••••••••"}</strong><small>Last rotated 12 days ago · scoped to relay operations</small></div><div className="row-action-group"><button type="button" onClick={() => setApiKeyVisible((value) => !value)} aria-label={apiKeyVisible ? "Mask API key" : "Reveal API key"}>{apiKeyVisible ? <EyeOff size={15} /> : <Eye size={15} />}</button><button type="button" onClick={() => setSettingsNotice("Key identifier copied to the local clipboard queue.")} aria-label="Copy key identifier"><Copy size={15} /></button><button type="button" onClick={() => setSettingsNotice("A replacement relay key has been queued for approval.")}>Rotate</button></div></div><button className="management-add-button" type="button" onClick={() => setSettingsNotice("New API key draft created with least-privilege defaults.")}><KeyRound size={15} />Create scoped key</button></div>}
-              {settingsSection === "mcp" && <div className="settings-section-stack"><div className="settings-section-heading"><div><h3>MCP connections</h3><p>Manage connected Model Context Protocol services and their current availability.</p></div><Cable size={18} /></div><div className="connection-list">{mcpConnections.map((connection) => <div className="connection-row" key={connection.id}><div><strong>{connection.name}</strong><span>{connection.endpoint}</span></div><em className={connection.status === "CONNECTED" ? "is-connected" : ""}>{connection.status}</em><button type="button" onClick={() => toggleMcpConnection(connection.id)}>{connection.status === "CONNECTED" ? "Pause" : "Connect"}</button></div>)}</div><button className="management-add-button" type="button" onClick={() => setSettingsNotice("MCP connection draft added; provide its endpoint to continue.")}><Cable size={15} />Add MCP connection</button></div>}
-              {settingsSection === "skills" && <div className="settings-section-stack"><div className="settings-section-heading"><div><h3>Skills and execution policies</h3><p>Select the active capability and review its policy scope before execution.</p></div><Sparkles size={18} /></div><div className="skill-management-list">{mockAgentStatus.skills.map((skill) => <div className="skill-management-row" key={skill.id}><div><strong>{skill.displayName}</strong><span>{skill.category.replaceAll("_", " ")} · {skill.executionPolicy === "AUTONOMOUS" ? "Autonomous" : "Policy gated"}</span></div><em>{skill.status}</em><button type="button" className={activeAgentSkillId === skill.id ? "is-selected" : ""} onClick={() => setActiveAgentSkillId(skill.id)}>{activeAgentSkillId === skill.id ? "Active" : "Set active"}</button></div>)}</div></div>}
+              {settingsSection === "mcp" && (
+                <div className="settings-section-stack">
+                  <div className="settings-section-heading">
+                    <div>
+                      <h3>MCP connections</h3>
+                      <p>Manage connected Model Context Protocol services and their current availability.</p>
+                    </div>
+                    <Cable size={18} />
+                  </div>
+                  <div className="connection-list">
+                    {mcps.map((mcp) => (
+                      <div className="connection-row" key={mcp}>
+                        <div>
+                          <strong>{mcp}</strong>
+                          <span>Model Context Protocol plugin</span>
+                        </div>
+                        <em className="is-connected">CONNECTED</em>
+                        <button type="button" onClick={() => handleRemoveMcp(mcp)} title={`Remove ${mcp}`}>
+                          <Trash2 size={13} /> Remove
+                        </button>
+                      </div>
+                    ))}
+                    {mcps.length === 0 && (
+                      <p className="text-xs text-white/50 py-2">No MCP connections configured.</p>
+                    )}
+                  </div>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (newMcpName.trim()) {
+                        handleAddMcp(newMcpName);
+                        setNewMcpName("");
+                      }
+                    }}
+                    className="flex gap-2 items-center"
+                  >
+                    <input
+                      type="text"
+                      placeholder="MCP connection name (e.g. postgres, git)…"
+                      value={newMcpName}
+                      onChange={(e) => setNewMcpName(e.target.value)}
+                      className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-emerald-500/50"
+                    />
+                    <button className="management-add-button" type="submit">
+                      <Cable size={15} />Add MCP connection
+                    </button>
+                  </form>
+                </div>
+              )}
+              {settingsSection === "skills" && (
+                <div className="settings-section-stack">
+                  <div className="settings-section-heading">
+                    <div>
+                      <h3>Skills and execution policies</h3>
+                      <p>Select the active capability and review its policy scope before execution.</p>
+                    </div>
+                    <Sparkles size={18} />
+                  </div>
+                  <div className="skill-management-list">
+                    {skills.map((skill) => (
+                      <div className="skill-management-row" key={skill}>
+                        <div>
+                          <strong>{skill.charAt(0).toUpperCase() + skill.slice(1)}</strong>
+                          <span>Autonomous capability</span>
+                        </div>
+                        <em>READY</em>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            className={activeAgentSkillId === skill ? "is-selected" : ""}
+                            onClick={() => setActiveAgentSkillId(skill)}
+                          >
+                            {activeAgentSkillId === skill ? "Active" : "Set active"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveSkill(skill)}
+                            title={`Remove ${skill}`}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {skills.length === 0 && (
+                      <p className="text-xs text-white/50 py-2">No skills configured.</p>
+                    )}
+                  </div>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (newSkillName.trim()) {
+                        handleAddSkill(newSkillName);
+                        setNewSkillName("");
+                      }
+                    }}
+                    className="flex gap-2 items-center"
+                  >
+                    <input
+                      type="text"
+                      placeholder="Skill name (e.g. diagnostic, remediation)…"
+                      value={newSkillName}
+                      onChange={(e) => setNewSkillName(e.target.value)}
+                      className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-emerald-500/50"
+                    />
+                    <button className="management-add-button" type="submit">
+                      <Sparkles size={15} />Add Skill
+                    </button>
+                  </form>
+                </div>
+              )}
               {settingsNotice && <p className="management-notice"><CheckCircle2 size={15} />{settingsNotice}</p>}
             </section>
           </div>
