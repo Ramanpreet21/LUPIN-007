@@ -2,6 +2,7 @@
 import { loadConfig, parsePort } from "./config";
 import { createLogger, type Logger } from "./logger";
 import { initTrueForge } from "./trueforge";
+import { initDb } from "./db";
 import { startServer } from "./server";
 import { createIncidentRouter } from "./incident-plane";
 import { createSandboxRouter } from "./routes/sandbox";
@@ -80,6 +81,8 @@ async function main(): Promise<void> {
     logger,
   );
 
+  initDb();
+
   let server;
   try {
     server = await startServer({
@@ -89,8 +92,7 @@ async function main(): Promise<void> {
       getStatus: () => tf.status,
       registerRoutes: (app, { broadcast }) => {
         app.use(createIncidentRouter({ getTf: () => tf, logger, broadcast, model: config.trueforgeModel }));
-        app.use(createSandboxRouter({ getTf: () => tf, logger }));
-
+        app.use(createSandboxRouter({ getTf: () => tf, logger, broadcast }));
         app.use(createModelRouter({ logger, getTf: () => tf, model: config.trueforgeModel, apiToken: config.controlPlaneApiToken }));
       },
     });

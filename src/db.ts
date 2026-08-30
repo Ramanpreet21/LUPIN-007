@@ -167,6 +167,7 @@ const DEFAULT_PROFILES = [
 const DEFAULT_SETTINGS: Record<string, string> = {
   enforcement_mode: "STRICT_GATED",
   model: "google-gemini/gemini-3-6-flash",
+  sandbox_provider: "isolated-local",
   sandbox_url: "",
   operator_name: "",
   skills: '["diagnostic","remediation","runbook"]',
