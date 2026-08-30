@@ -81,6 +81,7 @@ import {
   Trash2,
   TriangleAlert,
   X,
+  Zap,
 } from "lucide-react";
 
 type SettingsSection = "general" | "sandbox" | "keys" | "mcp" | "skills";
@@ -366,6 +367,20 @@ export default function Home() {
   const [activeTarget, setActiveTarget] = useState(() => ({ host: storedSetup?.ssh.targetHost ?? defaultAgentStatus.session.hostname, port: storedSetup?.ssh.sshPort ?? 22 }));
   const [activeAgentSkillId, setActiveAgentSkillId] = useState<string | null>(defaultAgentStatus.activeSkillId ?? null);
   const [fleetHosts, setFleetHosts] = useState<unknown[]>([]);
+  const [selectedAlertToTrigger, setSelectedAlertToTrigger] = useState<string>("HighCPUUsage");
+  const hasApiKey = configuredProviders.length > 0;
+
+  const triggerDemoAlert = useCallback(async (alertname: string) => {
+    try {
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/demo/trigger-alert`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ alertname }),
+      });
+    } catch (err) {
+      console.error("Failed to trigger demo alert:", err);
+    }
+  }, []);
 
   // Only show models from providers that have an API key configured (or live TrueForge/Gemini)
   const visibleModels = useMemo(() => {
@@ -494,6 +509,14 @@ export default function Home() {
   }, [fetchFleetHosts]);
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const activeSessionIdRef = useRef<string | null>(null);
+  const selectSessionAbortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      selectSessionAbortControllerRef.current?.abort();
+    };
+  }, []);
 
   const handleConverseThinking = useCallback((content: string, _step: number) => {
     setConversationMessages((current) => {
@@ -758,6 +781,10 @@ export default function Home() {
       });
       if (res.ok) {
         const session = (await res.json()) as { id: string; summary?: string };
+        if (selectSessionAbortControllerRef.current) {
+          selectSessionAbortControllerRef.current.abort();
+        }
+        activeSessionIdRef.current = session.id;
         setActiveSessionId(session.id);
         setConversationMessages([
           {
@@ -775,10 +802,20 @@ export default function Home() {
   }, [selectedModel]);
 
   const handleSelectSession = useCallback((sessionId: string) => {
+    if (selectSessionAbortControllerRef.current) {
+      selectSessionAbortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    selectSessionAbortControllerRef.current = controller;
+    activeSessionIdRef.current = sessionId;
     setActiveSessionId(sessionId);
-    void fetch(`${CONTROL_PLANE_ORIGIN}/api/sessions/${sessionId}/messages`)
+
+    void fetch(`${CONTROL_PLANE_ORIGIN}/api/sessions/${sessionId}/messages`, {
+      signal: controller.signal,
+    })
       .then((r) => r.json())
       .then((d: { data?: Array<{ id: string; role: string; label: string; content: string; created_at: string }> }) => {
+        if (controller.signal.aborted || activeSessionIdRef.current !== sessionId) return;
         if (Array.isArray(d?.data) && d.data.length > 0) {
           setConversationMessages(
             d.data.map((m) => ({
@@ -801,7 +838,9 @@ export default function Home() {
           ]);
         }
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        if (controller.signal.aborted || activeSessionIdRef.current !== sessionId) return;
+        if (err instanceof DOMException && err.name === "AbortError") return;
         setConversationMessages([
           {
             id: `sys-${Date.now()}`,
@@ -815,6 +854,12 @@ export default function Home() {
   }, []);
 
   const handleDeleteSession = useCallback((deletedId: string) => {
+    if (activeSessionIdRef.current === deletedId) {
+      if (selectSessionAbortControllerRef.current) {
+        selectSessionAbortControllerRef.current.abort();
+      }
+      activeSessionIdRef.current = null;
+    }
     setActiveSessionId((current) => {
       if (current === deletedId) {
         setConversationMessages([]);
@@ -838,7 +883,8 @@ export default function Home() {
     void controlPlane
       .converse(message, activeSessionId ?? undefined)
       .then((res) => {
-        if (res?.session_id && !activeSessionId) {
+        if (res?.session_id && !activeSessionIdRef.current) {
+          activeSessionIdRef.current = res.session_id;
           setActiveSessionId(res.session_id);
         }
       })

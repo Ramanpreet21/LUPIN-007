@@ -24,8 +24,7 @@ interface FleetHostRow {
 
 function mapHostToTargetNode(host: FleetHostRow): TargetNode {
   const isOnline = host.last_probe_status === "online";
-  const isOffline = host.last_probe_status === "offline";
-  const status = isOnline ? "CONNECTED" : isOffline ? "UNREACHABLE" : "CONNECTED";
+  const status = isOnline ? "CONNECTED" : "UNREACHABLE";
 
   return {
     id: host.id,
