@@ -3,7 +3,7 @@
  * First-run setup uses the Luminous Obsidian Instrument Panel language:
  * dark frosted layers, ion-mint operational signals, asymmetric rails, and compact precise type.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   BellRing,
   Box,
@@ -21,6 +21,8 @@ import {
 } from "lucide-react";
 import "./FirstRunSetup.css";
 
+const API = import.meta.env.VITE_CONTROL_PLANE_ORIGIN ?? "http://localhost:3000";
+
 export const LUMA_SETUP_STORAGE_KEY = "luma:first-run-setup:v1";
 
 export type LaunchMode = "DEMO_MOCK" | "LIVE_HOST";
@@ -35,6 +37,7 @@ export interface SSHConfig {
 export interface ModelKeysConfig {
   apiKey?: string;
   localLlmEndpoint?: string;
+  baseUrl?: string;
 }
 
 export interface NotificationPreferences {
@@ -50,6 +53,7 @@ export interface FirstRunPreferences {
   ssh: SSHConfig;
   modelKeys: ModelKeysConfig;
   notifications: NotificationPreferences;
+  sandboxUrl?: string;
   completedAt: string;
 }
 
@@ -85,8 +89,9 @@ const defaultFormState: FirstRunFormState = {
   launchMode: "LIVE_HOST",
   defaultApprovalMode: "STRICT_GATED",
   ssh: { targetHost: "192.168.1.104", sshPort: 22, userKeyPath: "~/.ssh/id_rsa" },
-  modelKeys: { apiKey: "", localLlmEndpoint: "http://localhost:11434" },
+  modelKeys: { apiKey: "", localLlmEndpoint: "anthropic/claude-sonnet-5", baseUrl: "http://localhost:11434" },
   notifications: { enableDesktopAlerts: true, enableSoundAlerts: false },
+  sandboxUrl: "",
 };
 
 const demoFormState: FirstRunFormState = {
@@ -94,7 +99,8 @@ const demoFormState: FirstRunFormState = {
   operatorLabel: "Operator-1",
   launchMode: "DEMO_MOCK",
   ssh: { targetHost: "localhost", sshPort: 22, userKeyPath: "~/.ssh/id_rsa" },
-  modelKeys: { apiKey: "", localLlmEndpoint: "http://localhost:11434" },
+  modelKeys: { apiKey: "", localLlmEndpoint: "anthropic/claude-sonnet-5", baseUrl: "http://localhost:11434" },
+  sandboxUrl: "",
 };
 
 function useFirstRunFormState() {
@@ -126,6 +132,7 @@ export function readLumaSetup(): FirstRunPreferences | null {
         defaultApprovalMode: parsed.approvalMode === "AUTONOMOUS" ? "AUTONOMOUS" : "STRICT_GATED",
         ssh: { targetHost: String(parsed.targetHost || defaultFormState.ssh.targetHost), sshPort: Number(parsed.targetPort) || 22, userKeyPath: defaultFormState.ssh.userKeyPath },
         notifications: { enableDesktopAlerts: Boolean(parsed.desktopNotifications), enableSoundAlerts: Boolean(parsed.connectionAlerts) },
+        sandboxUrl: typeof parsed.sandboxUrl === "string" ? parsed.sandboxUrl : "",
         completedAt: typeof parsed.completedAt === "string" ? parsed.completedAt : new Date().toISOString(),
       };
     }
@@ -141,11 +148,12 @@ export function readLumaSetup(): FirstRunPreferences | null {
         userKeyPath: String((parsed.ssh as SSHConfig).userKeyPath || defaultFormState.ssh.userKeyPath),
       },
       // Credentials are intentionally excluded from browser persistence and begin empty after a refresh.
-      modelKeys: { apiKey: "", localLlmEndpoint: defaultFormState.modelKeys.localLlmEndpoint },
+      modelKeys: { apiKey: "", localLlmEndpoint: defaultFormState.modelKeys.localLlmEndpoint, baseUrl: defaultFormState.modelKeys.baseUrl },
       notifications: {
         enableDesktopAlerts: Boolean((parsed.notifications as NotificationPreferences).enableDesktopAlerts),
         enableSoundAlerts: Boolean((parsed.notifications as NotificationPreferences).enableSoundAlerts),
       },
+      sandboxUrl: typeof parsed.sandboxUrl === "string" ? parsed.sandboxUrl : "",
       completedAt: typeof parsed.completedAt === "string" ? parsed.completedAt : new Date().toISOString(),
     };
   } catch {
@@ -173,12 +181,12 @@ export function FirstRunSetup({
   const [sandboxCheck, setSandboxCheck] = useState<{ state: "idle" | "testing" | "success" | "error"; message: string }>({ state: "idle", message: "" });
   const [modelCheck, setModelCheck] = useState<{ state: "idle" | "testing" | "success" | "error"; message: string }>({ state: "idle", message: "" });
   const [connectionCheck, setConnectionCheck] = useState<{ state: "idle" | "testing" | "success" | "error"; message: string }>({ state: "idle", message: "" });
+  const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
   const { form, setForm, update, updateSsh, updateModelKey, updateNotifications } = useFirstRunFormState();
 
   const API = import.meta.env.VITE_CONTROL_PLANE_ORIGIN ?? "http://localhost:3000";
 
-  // Auto-probe sandbox runtimes on mount
-  useState(() => {
+  useEffect(() => {
     fetch(`${API}/api/sandboxes/probes`)
       .then((r) => r.json())
       .then((data) => {
@@ -188,7 +196,16 @@ export function FirstRunSetup({
         }
       })
       .catch(() => {});
-  });
+
+    fetch(`${API}/api/models`)
+      .then((r) => r.json())
+      .then((data: { data: Array<{ id: string; name: string; provider: string }> }) => {
+        if (Array.isArray(data?.data)) {
+          setModels(data.data);
+        }
+      })
+      .catch(() => {});
+  }, [API]);
 
   const finishSetup = (submitted: FirstRunFormState = form) => {
     const completedPreferences: FirstRunPreferences = { ...submitted, completedAt: new Date().toISOString() };
@@ -198,6 +215,32 @@ export function FirstRunSetup({
     } catch {
       // Storage availability should not block local dashboard use.
     }
+
+    void fetch(`${API}/api/settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: completedPreferences.modelKeys.localLlmEndpoint ?? "",
+        operator_name: completedPreferences.operatorLabel,
+        enforcement_mode: completedPreferences.defaultApprovalMode,
+        sandbox_url: completedPreferences.sandboxUrl ?? "",
+      }),
+    }).catch(() => {});
+
+    // Register the SSH host if live mode
+    if (completedPreferences.launchMode === "LIVE_HOST" && completedPreferences.ssh.targetHost) {
+      void fetch(`${API}/api/fleet/hosts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          hostname: completedPreferences.ssh.targetHost,
+          port: completedPreferences.ssh.sshPort,
+          ssh_user: completedPreferences.ssh.userKeyPath?.split("@")[0] ?? "",
+          ssh_key_path: completedPreferences.ssh.userKeyPath,
+        }),
+      }).catch(() => {});
+    }
+
     onComplete(completedPreferences);
   };
 
@@ -236,14 +279,26 @@ export function FirstRunSetup({
   };
 
   const testConnection = async () => {
-    setConnectionCheck({ state: "testing", message: "Testing local handshake…" });
+    setConnectionCheck({ state: "testing", message: "Probing SSH target…" });
     try {
-      const result = onTestConnection
-        ? await onTestConnection(form.ssh)
-        : await new Promise<{ success: boolean; message: string }>((resolve) => window.setTimeout(() => resolve({ success: true, message: "Mock handshake ready. A backend callback can replace this test." }), 650));
-      setConnectionCheck({ state: result.success ? "success" : "error", message: result.message });
-    } catch {
-      setConnectionCheck({ state: "error", message: "The connection test could not be completed." });
+      if (onTestConnection) {
+        const result = await onTestConnection(form.ssh);
+        setConnectionCheck({ state: result.success ? "success" : "error", message: result.message });
+        return;
+      }
+      const res = await fetch(`${API}/api/fleet/probe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hostname: form.ssh.targetHost, port: form.ssh.sshPort }),
+      });
+      const data = (await res.json()) as { ssh: boolean; latency_ms: number; error?: string };
+      if (data.ssh) {
+        setConnectionCheck({ state: "success", message: `Connected (${data.latency_ms}ms latency)` });
+      } else {
+        setConnectionCheck({ state: "error", message: data.error ?? "Connection failed" });
+      }
+    } catch (err) {
+      setConnectionCheck({ state: "error", message: err instanceof Error ? err.message : "Probe failed" });
     }
   };
 
@@ -347,8 +402,45 @@ export function FirstRunSetup({
               <div className="setup-field-grid setup-target-fields"><label className="setup-field"><span>Target host or IP</span><input value={form.ssh.targetHost} onChange={(event) => updateSsh("targetHost", event.target.value)} placeholder="192.168.1.104" autoComplete="off" /></label><label className="setup-field"><span>SSH port</span><input value={String(form.ssh.sshPort)} onChange={(event) => updateSsh("sshPort", Number(event.target.value.replace(/\D/g, "")) || 22)} inputMode="numeric" placeholder="22" /></label></div>
               <label className="setup-field"><span>User / key path</span><input value={form.ssh.userKeyPath} onChange={(event) => updateSsh("userKeyPath", event.target.value)} placeholder="~/.ssh/id_rsa" autoComplete="off" /></label>
               <div className="setup-test-row"><button type="button" className="setup-test-button" onClick={() => void testConnection()} disabled={connectionCheck.state === "testing"}>{connectionCheck.state === "testing" ? "Testing connection…" : "Test connection"}</button>{connectionCheck.state !== "idle" && <span className={`setup-test-result is-${connectionCheck.state}`} aria-live="polite">{connectionCheck.message}</span>}</div>
-              <section className="setup-model-keys" aria-label="Model configuration"><button type="button" className="setup-model-keys-trigger" onClick={() => setModelsExpanded((value) => !value)} aria-expanded={modelsExpanded}><span><KeyRound size={15} /><strong>Model configuration</strong><small>Optional local session configuration</small></span><ChevronDown size={15} /></button>{modelsExpanded && <div className="setup-model-keys-body"><label className="setup-field"><span>API key</span><span className="setup-secret-field"><input type={apiKeyVisible ? "text" : "password"} value={form.modelKeys.apiKey} onChange={(event) => updateModelKey("apiKey", event.target.value)} autoComplete="off" /><button type="button" onClick={() => setApiKeyVisible((value) => !value)} aria-label={apiKeyVisible ? "Hide API key" : "Show API key"}>{apiKeyVisible ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label><label className="setup-field"><span>LLM endpoint</span><input value={form.modelKeys.localLlmEndpoint} onChange={(event) => updateModelKey("localLlmEndpoint", event.target.value)} placeholder="http://localhost:11434" autoComplete="off" /></label><p className="setup-security-note"><LockKeyhole size={14} /><span><strong>Security note</strong> The API key remains in this tab's memory only and is excluded from local storage and telemetry.</span></p></div>}</section>
-            {modelsExpanded && <div className="setup-test-row"><button type="button" className="setup-test-button" onClick={() => void saveModel()} disabled={modelCheck.state === "testing"}>{modelCheck.state === "testing" ? "Configuring…" : "Save model key"}</button>{modelCheck.state !== "idle" && <span className={`setup-test-result is-${modelCheck.state}`} aria-live="polite">{modelCheck.message}</span>}</div>}
+              <section className="setup-model-keys" aria-label="Model configuration">
+                <button type="button" className="setup-model-keys-trigger" onClick={() => setModelsExpanded((value) => !value)} aria-expanded={modelsExpanded}>
+                  <span><KeyRound size={15} /><strong>Model configuration</strong><small>Optional local session configuration</small></span>
+                  <ChevronDown size={15} />
+                </button>
+                {modelsExpanded && (
+                  <div className="setup-model-keys-body">
+                    <label className="setup-field">
+                      <span>API key</span>
+                      <span className="setup-secret-field">
+                        <input type={apiKeyVisible ? "text" : "password"} value={form.modelKeys.apiKey} onChange={(event) => updateModelKey("apiKey", event.target.value)} autoComplete="off" />
+                        <button type="button" onClick={() => setApiKeyVisible((value) => !value)} aria-label={apiKeyVisible ? "Hide API key" : "Show API key"}>{apiKeyVisible ? <EyeOff size={15} /> : <Eye size={15} />}</button>
+                      </span>
+                    </label>
+                    <label className="setup-field">
+                      <span>LLM model</span>
+                      <select value={form.modelKeys.localLlmEndpoint ?? ""} onChange={(e) => updateModelKey("localLlmEndpoint", e.target.value)} className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white/90">
+                        <option value="">Select model…</option>
+                        {models.map((m) => (<option key={m.id} value={m.id}>{m.name} ({m.provider})</option>))}
+                      </select>
+                    </label>
+                    {form.modelKeys.localLlmEndpoint === "local" && (
+                      <label className="setup-field">
+                        <span>Base URL</span>
+                        <input value={form.modelKeys.baseUrl ?? ""} onChange={(event) => updateModelKey("baseUrl", event.target.value)} placeholder="http://localhost:11434" autoComplete="off" />
+                      </label>
+                    )}
+                    <p className="setup-security-note"><LockKeyhole size={14} /><span><strong>Security note</strong> The API key remains in this tab's memory only and is excluded from local storage and telemetry.</span></p>
+                  </div>
+                )}
+              </section>
+              {modelsExpanded && (
+                <div className="setup-test-row">
+                  <button type="button" className="setup-test-button" onClick={() => void saveModel()} disabled={modelCheck.state === "testing"}>
+                    {modelCheck.state === "testing" ? "Configuring…" : "Save model key"}
+                  </button>
+                  {modelCheck.state !== "idle" && <span className={`setup-test-result is-${modelCheck.state}`} aria-live="polite">{modelCheck.message}</span>}
+                </div>
+              )}
 
               <section className="setup-model-keys" aria-label="Sandbox provider">
                 <button type="button" className="setup-model-keys-trigger" onClick={() => setSandboxExpanded((value) => !value)} aria-expanded={sandboxExpanded}>
