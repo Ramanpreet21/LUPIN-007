@@ -320,41 +320,98 @@ export default function Home() {
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>(() => storedSetup?.defaultApprovalMode ?? defaultAgentStatus.safety.approvalMode);
   const [agentStopped, setAgentStopped] = useState(false);
 
-  const DEFAULT_MODELS = [
-    { id: "google-gemini/gemini-3-6-flash", name: "Gemini 3.6 Flash (Google)" },
-    { id: "google-gemini/gemini-3-1-pro-preview", name: "Gemini 3.1 Pro Preview (Google)" },
-    { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5 (Anthropic)" },
-    { id: "anthropic/claude-sonnet-4-6", name: "Claude Sonnet 4.6 (Anthropic)" },
-    { id: "anthropic/claude-opus-5", name: "Claude Opus 5 (Anthropic)" },
-    { id: "anthropic/claude-opus-4-8", name: "Claude Opus 4.8 (Anthropic)" },
-    { id: "anthropic/claude-haiku-4-5", name: "Claude Haiku 4.5 (Anthropic)" },
-    { id: "anthropic/claude-fable-5", name: "Claude Fable 5 (Anthropic)" },
-    { id: "openai/gpt-5-6-terra", name: "GPT-5.6 Terra (OpenAI)" },
-    { id: "openai/gpt-5-6-sol", name: "GPT-5.6 Sol (OpenAI)" },
-    { id: "openai/gpt-5-6-luna", name: "GPT-5.6 Luna (OpenAI)" },
-    { id: "openai/gpt-5-5", name: "GPT-5.5 (OpenAI)" },
-    { id: "openai/gpt-5-4-mini", name: "GPT-5.4 Mini (OpenAI)" },
-    { id: "fireworks/deepseek-v4-pro", name: "DeepSeek V4 Pro (Fireworks)" },
-    { id: "fireworks/kimi-k3", name: "Kimi K3 (Fireworks)" },
-    { id: "fireworks/glm-5p2", name: "GLM-5.2 (Fireworks)" },
-    { id: "fireworks/minimax-m3", name: "MiniMax M3 (Fireworks)" },
-    { id: "alibaba/qwen3-8-max", name: "Qwen 3.8 Max (Alibaba)" },
-    { id: "alibaba/qwen3-7-max", name: "Qwen 3.7 Max (Alibaba)" },
-    { id: "alibaba/qwen3-7-plus", name: "Qwen 3.7 Plus (Alibaba)" },
-    { id: "alibaba/qwen3-7-flash", name: "Qwen 3.7 Flash (Alibaba)" },
-    { id: "zai/glm-5-2", name: "GLM 5.2 (Zhipu AI)" },
-    { id: "zai/glm-5-turbo", name: "GLM 5 Turbo (Zhipu AI)" },
-    { id: "moonshot/kimi-k3", name: "Kimi K3 (Moonshot)" },
-    { id: "moonshot/kimi-k2-7-code", name: "Kimi K2.7 Code (Moonshot)" },
-    { id: "local", name: "Local Model (Ollama / vLLM)" },
-  ];
+  const DEFAULT_PROVIDERS = useMemo(() => [
+    { id: "google-gemini", name: "Google Gemini", defaultModel: "google-gemini/gemini-3-6-flash", requiresApiKey: true },
+    { id: "anthropic", name: "Anthropic Claude", defaultModel: "anthropic/claude-sonnet-5", requiresApiKey: true },
+    { id: "openai", name: "OpenAI", defaultModel: "openai/gpt-5-6-terra", requiresApiKey: true },
+    { id: "fireworks", name: "Fireworks", defaultModel: "fireworks/deepseek-v4-pro", requiresApiKey: true },
+    { id: "alibaba", name: "Alibaba Qwen", defaultModel: "alibaba/qwen3-8-max", requiresApiKey: true },
+    { id: "zai", name: "Zhipu AI", defaultModel: "zai/glm-5-2", requiresApiKey: true },
+    { id: "moonshot", name: "Moonshot", defaultModel: "moonshot/kimi-k3", requiresApiKey: true },
+    { id: "local", name: "Local Model (Ollama / vLLM)", defaultModel: "local", requiresApiKey: false },
+  ], []);
 
-  const [models, setModels] = useState<Array<{ id: string; name: string }>>(DEFAULT_MODELS);
+  const DEFAULT_MODELS = useMemo(() => [
+    { id: "google-gemini/gemini-3-6-flash", name: "Gemini 3.6 Flash", provider: "Google Gemini", providerId: "google-gemini" },
+    { id: "google-gemini/gemini-3-1-pro-preview", name: "Gemini 3.1 Pro Preview", provider: "Google Gemini", providerId: "google-gemini" },
+    { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5", provider: "Anthropic", providerId: "anthropic" },
+    { id: "anthropic/claude-sonnet-4-6", name: "Claude Sonnet 4.6", provider: "Anthropic", providerId: "anthropic" },
+    { id: "anthropic/claude-opus-5", name: "Claude Opus 5", provider: "Anthropic", providerId: "anthropic" },
+    { id: "anthropic/claude-opus-4-8", name: "Claude Opus 4.8", provider: "Anthropic", providerId: "anthropic" },
+    { id: "anthropic/claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "Anthropic", providerId: "anthropic" },
+    { id: "anthropic/claude-fable-5", name: "Claude Fable 5", provider: "Anthropic", providerId: "anthropic" },
+    { id: "openai/gpt-5-6-terra", name: "GPT-5.6 Terra", provider: "OpenAI", providerId: "openai" },
+    { id: "openai/gpt-5-6-sol", name: "GPT-5.6 Sol", provider: "OpenAI", providerId: "openai" },
+    { id: "openai/gpt-5-6-luna", name: "GPT-5.6 Luna", provider: "OpenAI", providerId: "openai" },
+    { id: "openai/gpt-5-5", name: "GPT-5.5", provider: "OpenAI", providerId: "openai" },
+    { id: "openai/gpt-5-4-mini", name: "GPT-5.4 Mini", provider: "OpenAI", providerId: "openai" },
+    { id: "fireworks/deepseek-v4-pro", name: "DeepSeek V4 Pro", provider: "Fireworks", providerId: "fireworks" },
+    { id: "fireworks/kimi-k3", name: "Kimi K3", provider: "Fireworks", providerId: "fireworks" },
+    { id: "fireworks/glm-5p2", name: "GLM-5.2", provider: "Fireworks", providerId: "fireworks" },
+    { id: "fireworks/minimax-m3", name: "MiniMax M3", provider: "Fireworks", providerId: "fireworks" },
+    { id: "alibaba/qwen3-8-max", name: "Qwen 3.8 Max", provider: "Alibaba", providerId: "alibaba" },
+    { id: "alibaba/qwen3-7-max", name: "Qwen 3.7 Max", provider: "Alibaba", providerId: "alibaba" },
+    { id: "alibaba/qwen3-7-plus", name: "Qwen 3.7 Plus", provider: "Alibaba", providerId: "alibaba" },
+    { id: "alibaba/qwen3-7-flash", name: "Qwen 3.7 Flash", provider: "Alibaba", providerId: "alibaba" },
+    { id: "zai/glm-5-2", name: "GLM 5.2", provider: "Zhipu AI", providerId: "zai" },
+    { id: "zai/glm-5-turbo", name: "GLM 5 Turbo", provider: "Zhipu AI", providerId: "zai" },
+    { id: "moonshot/kimi-k3", name: "Kimi K3", provider: "Moonshot", providerId: "moonshot" },
+    { id: "moonshot/kimi-k2-7-code", name: "Kimi K2.7 Code", provider: "Moonshot", providerId: "moonshot" },
+    { id: "local", name: "Local Model (Ollama / vLLM)", provider: "Local", providerId: "local" },
+  ], []);
+
+  const [providers, setProviders] = useState(DEFAULT_PROVIDERS);
+  const [configuredProviders, setConfiguredProviders] = useState<string[]>(["google-gemini"]);
+  const [allModels, setAllModels] = useState<Array<{ id: string; name: string; provider?: string; providerId?: string }>>(DEFAULT_MODELS);
   const [selectedModel, setSelectedModel] = useState<string>(() => storedSetup?.modelKeys.localLlmEndpoint ?? "google-gemini/gemini-3-6-flash");
+  const [selectedProvider, setSelectedProvider] = useState<string>("google-gemini");
+  const [providerApiKey, setProviderApiKey] = useState<string>("");
+  const [providerBaseUrl, setProviderBaseUrl] = useState<string>("http://localhost:11434");
+  const [providerKeyVisible, setProviderKeyVisible] = useState<boolean>(false);
   const [sshStatus, setSshStatus] = useState<SSHStatus>(() => storedSetup?.launchMode === "LIVE_HOST" ? "DISCONNECTED" : defaultAgentStatus.session.sshStatus);
   const [activeTarget, setActiveTarget] = useState(() => ({ host: storedSetup?.ssh.targetHost ?? defaultAgentStatus.session.hostname, port: storedSetup?.ssh.sshPort ?? 22 }));
   const [activeAgentSkillId, setActiveAgentSkillId] = useState<string | null>(defaultAgentStatus.activeSkillId ?? null);
   const [fleetHosts, setFleetHosts] = useState<unknown[]>([]);
+
+  // Only show models from providers that have an API key configured (or live TrueForge/Gemini)
+  const visibleModels = useMemo(() => {
+    if (configuredProviders.length === 0) return allModels;
+    return allModels.filter((m) => {
+      const pId = m.providerId || m.id.split("/")[0];
+      return configuredProviders.includes(pId) || pId === "google-gemini" || m.provider?.includes("Configured");
+    });
+  }, [allModels, configuredProviders]);
+
+  const handleSaveProviderKey = async () => {
+    if (!selectedProvider) return;
+    const newConfigured = Array.from(new Set([...configuredProviders, selectedProvider]));
+    setConfiguredProviders(newConfigured);
+    try {
+      const payload: Record<string, unknown> = {
+        model_provider: selectedProvider,
+        configured_providers: newConfigured,
+      };
+      if (providerApiKey.trim()) {
+        payload.model_api_key = providerApiKey.trim();
+        payload[`${selectedProvider.replace("-", "_")}_api_key`] = providerApiKey.trim();
+      }
+      await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      setSettingsNotice(`API key configured for ${providers.find((p) => p.id === selectedProvider)?.name || selectedProvider}. Models unlocked!`);
+      // Refresh models
+      void fetch(`${CONTROL_PLANE_ORIGIN}/api/models`)
+        .then((r) => r.json())
+        .then((d: { data?: Array<{ id: string; name: string; provider?: string; providerId?: string }>; configuredProviders?: string[] }) => {
+          if (Array.isArray(d?.data)) setAllModels(d.data);
+          if (Array.isArray(d?.configuredProviders)) setConfiguredProviders(d.configuredProviders);
+        });
+    } catch (err) {
+      setSettingsNotice(`Failed to save provider key: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
 
   const fetchFleetHosts = useCallback(() => {
     void fetch(`${CONTROL_PLANE_ORIGIN}/api/fleet/hosts`)
@@ -445,8 +502,10 @@ export default function Home() {
   useEffect(() => {
     void fetch(`${CONTROL_PLANE_ORIGIN}/api/models`)
       .then((r) => r.json())
-      .then((d: { data: Array<{ id: string; name: string }>; active?: string }) => {
-        if (Array.isArray(d?.data)) setModels(d.data);
+      .then((d: { data?: Array<{ id: string; name: string; provider?: string; providerId?: string }>; providers?: typeof DEFAULT_PROVIDERS; configuredProviders?: string[]; active?: string }) => {
+        if (Array.isArray(d?.data)) setAllModels(d.data);
+        if (Array.isArray(d?.providers)) setProviders(d.providers);
+        if (Array.isArray(d?.configuredProviders)) setConfiguredProviders(d.configuredProviders);
         if (d?.active) setSelectedModel(d.active);
       })
       .catch(() => {});
@@ -962,7 +1021,7 @@ export default function Home() {
               onEmergencyStop={handleEmergencyStop}
               onSSHAction={handleSshAction}
               onSkillClick={setActiveAgentSkillId}
-              models={models}
+              models={visibleModels}
               onModelChange={handleModelChange}
             />
 
@@ -1015,14 +1074,16 @@ export default function Home() {
                   <div className="p-3.5 rounded-lg bg-white/5 border border-white/10 space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-semibold uppercase tracking-wider text-white/70">LLM Reasoning Model</span>
-                      <span className="text-[10px] text-emerald-400 font-mono">TrueForge Agent Engine</span>
+                      <span className="text-[10px] text-emerald-400 font-mono">
+                        {configuredProviders.length} Provider{configuredProviders.length === 1 ? "" : "s"} Configured
+                      </span>
                     </div>
                     <select
                       value={selectedModel}
                       onChange={(e) => handleModelChange(e.target.value)}
                       className="w-full bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
                     >
-                      {models.map((m) => (
+                      {visibleModels.map((m) => (
                         <option key={m.id} value={m.id} className="bg-neutral-900 text-white">
                           {m.name}
                         </option>
@@ -1167,7 +1228,117 @@ export default function Home() {
                   </div>
                 </div>
               )}
-              {settingsSection === "keys" && <div className="settings-section-stack"><div className="settings-section-heading"><div><h3>API key management</h3><p>Keys are masked in this frontend prototype and are never rendered in full by default.</p></div><KeyRound size={18} /></div><div className="api-key-row"><div><span>Control-plane relay key</span><strong>{apiKeyVisible ? "lupin_live_81d4_7c6e_••••" : "lupin_••••••••••••••••"}</strong><small>Last rotated 12 days ago · scoped to relay operations</small></div><div className="row-action-group"><button type="button" onClick={() => setApiKeyVisible((value) => !value)} aria-label={apiKeyVisible ? "Mask API key" : "Reveal API key"}>{apiKeyVisible ? <EyeOff size={15} /> : <Eye size={15} />}</button><button type="button" onClick={() => setSettingsNotice("Key identifier copied to the local clipboard queue.")} aria-label="Copy key identifier"><Copy size={15} /></button><button type="button" onClick={() => setSettingsNotice("A replacement relay key has been queued for approval.")}>Rotate</button></div></div><button className="management-add-button" type="button" onClick={() => setSettingsNotice("New API key draft created with least-privilege defaults.")}><KeyRound size={15} />Create scoped key</button></div>}
+              {settingsSection === "keys" && (
+                <div className="settings-section-stack">
+                  <div className="settings-section-heading">
+                    <div>
+                      <h3>LLM Provider Credentials</h3>
+                      <p>Add API keys for AI model providers to unlock their models in the Agent Status bar.</p>
+                    </div>
+                    <KeyRound size={18} />
+                  </div>
+
+                  <div className="p-3.5 rounded-lg bg-white/5 border border-white/10 space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                        Provider
+                      </label>
+                      <select
+                        value={selectedProvider}
+                        onChange={(e) => {
+                          setSelectedProvider(e.target.value);
+                          setProviderApiKey("");
+                        }}
+                        className="w-full bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                      >
+                        {providers.map((p) => (
+                          <option key={p.id} value={p.id} className="bg-neutral-900 text-white">
+                            {p.name} {configuredProviders.includes(p.id) ? "✓ (Unlocked)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {selectedProvider !== "local" ? (
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                          {providers.find((p) => p.id === selectedProvider)?.name ?? "Provider"} API Key
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type={providerKeyVisible ? "text" : "password"}
+                            value={providerApiKey}
+                            onChange={(e) => setProviderApiKey(e.target.value)}
+                            placeholder={configuredProviders.includes(selectedProvider) ? "•••••••••••••••• (Configured)" : "Paste provider API key…"}
+                            className="flex-1 bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setProviderKeyVisible((v) => !v)}
+                            className="p-2 rounded bg-white/5 border border-white/10 hover:bg-white/10 text-white/70"
+                            aria-label="Toggle key visibility"
+                          >
+                            {providerKeyVisible ? <EyeOff size={14} /> : <Eye size={14} />}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                          Local Endpoint Base URL
+                        </label>
+                        <input
+                          type="text"
+                          value={providerBaseUrl}
+                          onChange={(e) => setProviderBaseUrl(e.target.value)}
+                          placeholder="http://localhost:11434"
+                          className="w-full bg-black/60 border border-white/20 rounded-md px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between pt-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] text-white/40 uppercase font-mono">Unlocked:</span>
+                        {configuredProviders.map((cp) => (
+                          <span key={cp} className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 font-mono border border-emerald-500/20">
+                            {providers.find((p) => p.id === cp)?.name || cp}
+                          </span>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveProviderKey()}
+                        className="px-3 py-1.5 rounded text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 transition-colors"
+                      >
+                        Save & Unlock Models
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="settings-section-heading pt-2 border-t border-white/5">
+                    <div>
+                      <h3>Control-Plane Relay Key</h3>
+                      <p>Internal agent communications key.</p>
+                    </div>
+                  </div>
+                  <div className="api-key-row">
+                    <div>
+                      <span>Control-plane relay key</span>
+                      <strong>{apiKeyVisible ? "lupin_live_81d4_7c6e_••••" : "lupin_••••••••••••••••"}</strong>
+                      <small>Last rotated 12 days ago · scoped to relay operations</small>
+                    </div>
+                    <div className="row-action-group">
+                      <button type="button" onClick={() => setApiKeyVisible((value) => !value)} aria-label={apiKeyVisible ? "Mask API key" : "Reveal API key"}>
+                        {apiKeyVisible ? <EyeOff size={15} /> : <Eye size={15} />}
+                      </button>
+                      <button type="button" onClick={() => setSettingsNotice("Key identifier copied to the local clipboard queue.")} aria-label="Copy key identifier">
+                        <Copy size={15} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
               {settingsSection === "mcp" && (
                 <div className="settings-section-stack">
                   <div className="settings-section-heading">
