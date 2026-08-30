@@ -5,9 +5,12 @@ const sshLabel: Record<SSHStatus, string> = { CONNECTED: "connected", DISCONNECT
 const nextMode = (mode: ApprovalMode): ApprovalMode => mode === "AUTONOMOUS" ? "STRICT_GATED" : "AUTONOMOUS";
 const contextTone = (used: number, max: number) => { const percentage = max === 0 ? 0 : used / max * 100; return percentage > 90 ? "critical" : percentage >= 70 ? "warning" : "safe"; };
 
-export function AgentStatusCapabilitiesBar({ data, onToggleApprovalMode, onEmergencyStop, onSSHAction, onSkillClick, hasApiKey, onOpenSettings, className = "", models, onModelChange }: AgentStatusCapabilitiesBarProps) {
+export function AgentStatusCapabilitiesBar({ data, onToggleApprovalMode, onEmergencyStop, onSSHAction, onSkillClick, hasApiKey, onOpenSettings, className = "", models, onModelChange, targets, onTargetChange }: AgentStatusCapabilitiesBarProps) {
   const usage = data.telemetry.maxTokens === 0 ? 0 : Math.min(data.telemetry.tokensUsed / data.telemetry.maxTokens * 100, 100);
   const tone = contextTone(data.telemetry.tokensUsed, data.telemetry.maxTokens);
+  const activePort = data.session.targetIp.replace(/[^0-9]/g, "") || "22";
+  const activeKey = `${data.session.hostname}:${activePort}`;
+
   return <article className={`cutout-card agent-status-bar glass-surface ${className}`.trim()} aria-label="Agent status and capabilities">
     <header className="agent-bar-header">
       <div className="agent-title"><TerminalSquare size={13} /><span>Agent status</span></div>
@@ -41,7 +44,34 @@ export function AgentStatusCapabilitiesBar({ data, onToggleApprovalMode, onEmerg
         <button className="agent-stop-button" type="button" onClick={onEmergencyStop} aria-label="Emergency stop"><Ban size={12} /></button>
       </div>
     </header>
-    <section className="agent-connection-strip" aria-label="SSH session metadata"><span className={`agent-ssh-dot agent-ssh-dot--${data.session.sshStatus.toLowerCase()}`} /><strong>{data.session.hostname}</strong><span>{data.session.targetIp}</span><em>{data.session.latencyMs}ms</em><details className="agent-ssh-menu"><summary aria-label="SSH session actions"><ChevronDown size={12} /></summary><div className="agent-ssh-menu-content"><button type="button" onClick={() => onSSHAction?.("RECONNECT")}>Reconnect</button><button type="button" onClick={() => onSSHAction?.("CLEAR_SCROLLBACK")}>Clear scrollback</button><button type="button" onClick={() => onSSHAction?.("SPAWN_SUBSHELL")}>Spawn subshell</button></div></details><small>{sshLabel[data.session.sshStatus]}</small></section>
+    <section className="agent-connection-strip" aria-label="SSH session metadata">
+      <span className={`agent-ssh-dot agent-ssh-dot--${data.session.sshStatus.toLowerCase()}`} />
+      {targets && targets.length > 0 && onTargetChange ? (
+        <select
+          value={activeKey}
+          onChange={(e) => {
+            const [h, p] = e.target.value.split(":");
+            onTargetChange({ host: h, port: Number(p) || 22 });
+          }}
+          aria-label="Change target SSH connection"
+          className="bg-transparent border border-white/10 rounded px-1.5 py-0.5 text-xs text-white/90 font-medium hover:border-white/30 focus:outline-none cursor-pointer"
+        >
+          {targets.map((t) => (
+            <option key={`${t.hostname}:${t.port}`} value={`${t.hostname}:${t.port}`} className="bg-neutral-900 text-white">
+              {t.hostname} · SSH {t.port}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <>
+          <strong>{data.session.hostname}</strong>
+          <span>{data.session.targetIp}</span>
+        </>
+      )}
+      <em>{data.session.latencyMs}ms</em>
+      <details className="agent-ssh-menu"><summary aria-label="SSH session actions"><ChevronDown size={12} /></summary><div className="agent-ssh-menu-content"><button type="button" onClick={() => onSSHAction?.("RECONNECT")}>Reconnect</button><button type="button" onClick={() => onSSHAction?.("CLEAR_SCROLLBACK")}>Clear scrollback</button><button type="button" onClick={() => onSSHAction?.("SPAWN_SUBSHELL")}>Spawn subshell</button></div></details>
+      <small>{sshLabel[data.session.sshStatus]}</small>
+    </section>
     <section className="agent-telemetry" aria-label="Engine and context telemetry"><div className="agent-engine"><Cpu size={12} /><span>{data.engine.orchestratorRuntime}</span><em>{data.engine.containerRuntime}</em></div><div className="agent-model">{models && onModelChange ? (
   <select
     value={data.telemetry.activeModel}

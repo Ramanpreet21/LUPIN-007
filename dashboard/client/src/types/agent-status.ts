@@ -38,4 +38,6 @@ export interface AgentStatusCapabilitiesBarProps {
   className?: string;
   models?: Array<{ id: string; name: string }>;
   onModelChange?: (modelId: string) => void;
+  targets?: Array<{ id: string; hostname: string; port: number | string }>;
+  onTargetChange?: (target: { host: string; port: number }) => void;
 }
