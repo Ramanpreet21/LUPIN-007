@@ -400,7 +400,7 @@ export function createIncidentRouter({
           spec: {
             model: { name: model },
             instructions: INCIDENT_RESPONDER_PROMPT,
-            config: { sandbox: { enabled: true } },
+            config: { sandbox: { enabled: false } },
           },
         },
       });
