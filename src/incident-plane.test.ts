@@ -6,9 +6,17 @@ import { startServer } from "./server";
 import type { TrueForgeHandle } from "./trueforge";
 import { computeSafetyBadges, createIncidentRouter } from "./incident-plane";
 import { createIncident, getIncident, listIncidents, patchIncident, setIncidentStatus } from "./incidents";
+import { initDb, getDb } from "./db";
 import type { TrueForgeApi } from "@truefoundry/trueforge-sdk";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 type TurnStreamingEvent = TrueForgeApi.TurnStreamingEvent;
+
+const TEST_DB_DIR = join(__dirname, "..", "data", "test");
+const TEST_DB_PATH = join(TEST_DB_DIR, "incident-plane-test.sqlite");
+mkdirSync(TEST_DB_DIR, { recursive: true });
+initDb(TEST_DB_PATH);
 
 const logger = createLogger("silent");
 
@@ -881,6 +889,116 @@ test("POST /api/emergency-stop handles session cancellation errors gracefully (b
     assert.ok(body.cancelled >= 1);
     assert.equal(getIncident(inc.id)?.status, "failed");
   } finally {
+    await server.close();
+  }
+});
+
+test("enforcement mode AUTONOMOUS: auto-approves immediately on tool.approval_required", async () => {
+  const db = getDb();
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('enforcement_mode', 'AUTONOMOUS')").run();
+  const fake = makeFakeHandle(diagnosisGateStream(), doneStream("done"));
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    const res = await postJson(`http://127.0.0.1:${server.port}/alerts`, alertBody);
+    assert.equal(res.status, 202);
+    const { incident_id } = (await res.json()) as { incident_id: string };
+
+    const thinking = await ws.waitFor("agent_thinking");
+    assert.equal(thinking.incident_id, incident_id);
+
+    // In AUTONOMOUS mode, no manual approval is needed; turn resumes automatically to completion
+    const done = await ws.waitFor("execution_complete");
+    assert.equal(done.incident_id, incident_id);
+    assert.equal(done.payload.status, "success");
+
+    // Verify tool approval was auto-allowed
+    assert.equal(fake.resumed.length, 1);
+    const resumeInput = fake.resumed[0].request.input;
+    assert.ok(resumeInput && Array.isArray(resumeInput) && resumeInput.length === 1);
+    const approvalItem = resumeInput[0] as { type?: string; approval?: { status?: string } };
+    assert.equal(approvalItem.type, "user.tool_approval");
+    assert.equal(approvalItem.approval?.status, "allow");
+
+    const incident = getIncident(incident_id);
+    assert.equal(incident?.status, "completed");
+  } finally {
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('enforcement_mode', 'STRICT_GATED')").run();
+    ws.close();
+    await server.close();
+  }
+});
+
+test("enforcement mode DRY_RUN: auto-denies immediately on tool.approval_required and cancels session", async () => {
+  const db = getDb();
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('enforcement_mode', 'DRY_RUN')").run();
+  const fake = makeFakeHandle(diagnosisGateStream(), []);
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    const res = await postJson(`http://127.0.0.1:${server.port}/alerts`, alertBody);
+    assert.equal(res.status, 202);
+    const { incident_id } = (await res.json()) as { incident_id: string };
+
+    const thinking = await ws.waitFor("agent_thinking");
+    assert.equal(thinking.incident_id, incident_id);
+
+    // In DRY_RUN mode, auto-denies and emits execution_complete rejected
+    const done = await ws.waitFor("execution_complete");
+    assert.equal(done.incident_id, incident_id);
+    assert.equal(done.payload.status, "rejected");
+
+    // Verify tool approval was auto-denied
+    assert.equal(fake.resumed.length, 1);
+    const resumeInput = fake.resumed[0].request.input;
+    assert.ok(resumeInput && Array.isArray(resumeInput) && resumeInput.length === 1);
+    const approvalItem = resumeInput[0] as { type?: string; approval?: { status?: string; reason?: string } };
+    assert.equal(approvalItem.type, "user.tool_approval");
+    assert.equal(approvalItem.approval?.status, "deny");
+
+    // Session is cancelled
+    assert.ok(fake.cancelled.length >= 1);
+
+    const incident = getIncident(incident_id);
+    assert.equal(incident?.status, "rejected");
+  } finally {
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('enforcement_mode', 'STRICT_GATED')").run();
+    ws.close();
+    await server.close();
+  }
+});
+
+test("enforcement mode STRICT_GATED: broadcasts pending_approval and halts until operator acts", async () => {
+  const db = getDb();
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('enforcement_mode', 'STRICT_GATED')").run();
+  const fake = makeFakeHandle(diagnosisGateStream(), doneStream("done"));
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    const res = await postJson(`http://127.0.0.1:${server.port}/alerts`, alertBody);
+    assert.equal(res.status, 202);
+    const { incident_id } = (await res.json()) as { incident_id: string };
+
+    const pending = await ws.waitFor("pending_approval");
+    assert.equal(pending.incident_id, incident_id);
+    assert.equal(fake.resumed.length, 0);
+
+    const incBefore = getIncident(incident_id);
+    assert.equal(incBefore?.status, "awaiting_approval");
+
+    const approve = await postJson(
+      `http://127.0.0.1:${server.port}/api/approvals`,
+      JSON.stringify({ incident_id, decision: "approved" }),
+    );
+    assert.equal(approve.status, 200);
+
+    const done = await ws.waitFor("execution_complete");
+    assert.equal(done.incident_id, incident_id);
+    assert.equal(done.payload.status, "success");
+    assert.equal(fake.resumed.length, 1);
+  } finally {
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('enforcement_mode', 'STRICT_GATED')").run();
+    ws.close();
     await server.close();
   }
 });
