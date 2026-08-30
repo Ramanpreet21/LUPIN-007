@@ -33,5 +33,7 @@ export interface AgentStatusCapabilitiesBarProps {
   onEmergencyStop?: () => void;
   onSSHAction?: (action: "RECONNECT" | "CLEAR_SCROLLBACK" | "SPAWN_SUBSHELL") => void;
   onSkillClick?: (skillId: string) => void;
+  hasApiKey?: boolean;
+  onOpenSettings?: () => void;
   className?: string;
 }

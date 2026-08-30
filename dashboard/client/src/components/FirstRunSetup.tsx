@@ -201,9 +201,38 @@ export function FirstRunSetup({
     onComplete(completedPreferences);
   };
 
-  const launchDemo = () => {
-    setForm(demoFormState);
-    finishSetup(demoFormState);
+  const [demoLaunching, setDemoLaunching] = useState(false);
+  const [demoStatusText, setDemoStatusText] = useState("");
+
+  const launchDemo = async () => {
+    setDemoLaunching(true);
+    setDemoStatusText("Launching Docker Compose cluster & AlertManager…");
+    try {
+      const res = await fetch(`${API}/api/demo/start`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "Failed to start demo compose stack");
+      }
+      setDemoStatusText(`Cluster online (${data.engine}) · tf-server (:2222) and sandbox calibrated.`);
+      const demoState: FirstRunFormState = {
+        ...demoFormState,
+        ssh: {
+          targetHost: "localhost",
+          sshPort: 2222,
+          userKeyPath: "",
+        },
+      };
+      setForm(demoState);
+      setTimeout(() => {
+        finishSetup(demoState);
+      }, 600);
+    } catch (err) {
+      setDemoStatusText(`Notice: ${err instanceof Error ? err.message : String(err)}. Proceeding with simulated demo.`);
+      setTimeout(() => {
+        setForm(demoFormState);
+        finishSetup(demoFormState);
+      }, 1200);
+    }
   };
 
   const testConnection = async () => {
@@ -296,8 +325,19 @@ export function FirstRunSetup({
             {step === 0 && <section className="setup-step-panel" aria-labelledby="setup-launch-title">
               <div className="setup-step-title"><span><Sparkles size={18} /></span><div><h1 id="setup-launch-title">Choose the first launch path.</h1><p>Open a local demo immediately, or prepare a live host with a callback-ready connection workflow.</p></div></div>
               <div className="setup-launch-options">
-                <button type="button" className="setup-launch-card setup-launch-card--demo" onClick={launchDemo}><span className="setup-option-icon"><Play size={16} /></span><span><strong>Launch Demo Mode</strong><small>Start against a local mock target with safe defaults.</small></span><ChevronRight size={16} /></button>
-                <button type="button" className={`setup-launch-card ${form.launchMode === "LIVE_HOST" ? "is-selected" : ""}`} onClick={() => update("launchMode", "LIVE_HOST")}><span className="setup-option-icon"><ShieldCheck size={16} /></span><span><strong>Connect Live Host</strong><small>Configure SSH, local runtime, and the policy baseline.</small></span><Check size={16} /></button>
+                <button type="button" className="setup-launch-card setup-launch-card--demo" onClick={launchDemo} disabled={demoLaunching}>
+                  <span className="setup-option-icon"><Play size={16} /></span>
+                  <span>
+                    <strong>{demoLaunching ? "Initializing Demo Stack…" : "Launch Demo Mode"}</strong>
+                    <small>{demoStatusText || "Spins up multi-node Docker Compose cluster, AlertManager, and container sandbox."}</small>
+                  </span>
+                  <ChevronRight size={16} />
+                </button>
+                <button type="button" className={`setup-launch-card ${form.launchMode === "LIVE_HOST" ? "is-selected" : ""}`} onClick={() => update("launchMode", "LIVE_HOST")} disabled={demoLaunching}>
+                  <span className="setup-option-icon"><ShieldCheck size={16} /></span>
+                  <span><strong>Connect Live Host</strong><small>Configure SSH, local runtime, and the policy baseline.</small></span>
+                  <Check size={16} />
+                </button>
               </div>
             </section>}
 

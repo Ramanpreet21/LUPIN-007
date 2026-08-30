@@ -59,6 +59,7 @@ import {
   Trash2,
   TriangleAlert,
   X,
+  Zap,
 } from "lucide-react";
 
 type SettingsSection = "general" | "sandbox" | "keys" | "mcp" | "skills";
@@ -179,6 +180,7 @@ export default function Home() {
   const controlPlane = useControlPlane();
   const terminalStream = useControlPlaneTerminalStream(controlPlane);
   const health = useHealth();
+  const [hasApiKey, setHasApiKey] = useState<boolean>(true);
   const workspaceRef = useRef<HTMLElement>(null);
   const conversationViewportRef = useRef<HTMLDivElement>(null);
   const [workspaceClip, setWorkspaceClip] = useState<WorkspaceClip | null>(null);
@@ -187,6 +189,45 @@ export default function Home() {
   const [selectedTopologyNodeId, setSelectedTopologyNodeId] = useState<string | null>(null);
   const [operatorNotes, setOperatorNotes] = useState<OperatorNote[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
+
+  useEffect(() => {
+    fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`)
+      .then((r) => r.json())
+      .then((data) => {
+        const key = data.apiKey || data.gemini_api_key || data.daytona_api_key || data.sandbox_key;
+        setHasApiKey(Boolean(key));
+      })
+      .catch(() => {});
+  }, []);
+
+  const triggerDemoAlert = async () => {
+    try {
+      const res = await fetch(`${CONTROL_PLANE_ORIGIN}/api/demo/trigger-alert`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          alertname: "HighCPUUsage",
+          summary: "CPU runaway process PID 4192 on tf-server gateway",
+          severity: "critical",
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setConversationMessages((current) => [
+          ...current,
+          {
+            id: `alert-${Date.now()}`,
+            role: "system",
+            label: "PROMETHEUS ALERT",
+            time: "NOW",
+            content: "Prometheus AlertManager dispatched HighCPUUsage on tf-server:2222. Incident created in deck.",
+          },
+        ]);
+      }
+    } catch (err) {
+      console.error("Failed to trigger demo alert:", err);
+    }
+  };
 
   const selectView = (viewId: SystemViewId) => {
     setActiveViewId(viewId);
@@ -438,6 +479,64 @@ export default function Home() {
         <section className={`workspace-grid ${activeViewId === "COMMAND_DECK" ? "" : "operations-layout"}`}>
           {activeViewId !== "COMMAND_DECK" ? <SystemViewLayout activeViewId={activeViewId} /> : <>
           <section className="workspace-stage" style={cutoutCardStyle} aria-label="Measured workspace stage">
+            {!hasApiKey && (
+              <div
+                className="demo-llm-warning-banner glass-surface"
+                style={{
+                  marginBottom: "8px",
+                  padding: "8px 14px",
+                  borderRadius: "8px",
+                  background: "rgba(245, 158, 11, 0.12)",
+                  border: "1px solid rgba(245, 158, 11, 0.3)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  fontSize: "12px",
+                  color: "#fde68a",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Zap size={15} style={{ color: "#fbbf24", animation: "pulse 2s infinite" }} />
+                  <span>
+                    <strong>Demo Environment Active:</strong> SSH Cluster & Container Sandbox configured. Please configure your <strong>Gemini / LLM API Key</strong> in Settings to enable real-time agent reasoning.
+                  </span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <button
+                    type="button"
+                    onClick={triggerDemoAlert}
+                    style={{
+                      padding: "3px 8px",
+                      borderRadius: "4px",
+                      background: "rgba(239, 68, 68, 0.2)",
+                      border: "1px solid rgba(239, 68, 68, 0.4)",
+                      color: "#fca5a5",
+                      cursor: "pointer",
+                      fontWeight: 600,
+                      fontSize: "11px",
+                    }}
+                  >
+                    Trigger Alert
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setSettingsSection("keys"); setSettingsOpen(true); }}
+                    style={{
+                      padding: "3px 8px",
+                      borderRadius: "4px",
+                      background: "rgba(245, 158, 11, 0.25)",
+                      border: "1px solid rgba(245, 158, 11, 0.5)",
+                      color: "#fff",
+                      cursor: "pointer",
+                      fontWeight: 600,
+                      fontSize: "11px",
+                    }}
+                  >
+                    Open Settings
+                  </button>
+                </div>
+              </div>
+            )}
             <section
               ref={workspaceRef}
               className="focus-module glass-surface"
@@ -459,7 +558,15 @@ export default function Home() {
               </section>
               {notchMenuOpen ? <section className={`workspace-backend-popup ${backendPopup.priority === "attention" ? "is-attention" : ""}`} aria-label="Backend action popup"><div className="workspace-popup-head"><span className="workspace-popup-indicator"><TriangleAlert size={13} /></span><div><p className="eyebrow">{backendPopup.source}</p><strong>{backendPopup.title}</strong></div></div><p>{backendPopup.detail}</p><div className="workspace-popup-actions"><button type="button" onClick={() => setBackendPopup((current) => ({ ...current, title: "Review queued", detail: "The action request has been routed to the protected review queue.", priority: "routine" }))}>Review</button><button type="button" onClick={() => setConversationMessages((current) => [...current, { id: `backend-${Date.now()}`, role: "system", label: "BACKEND", time: "NOW", content: `Action ${backendPopup.id} was added to the conversation review history.` }])}>History</button><button type="button" onClick={() => setNotchMenuOpen(false)}>Dismiss</button></div></section> : <form className="workspace-input" onSubmit={submitConversation}><button type="submit" aria-label="Send message"><Send size={16} /></button><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Ask Lupin about the active workspace…" aria-label="Ask Lupin about the active workspace" /><kbd>↵</kbd></form>}
             </section>
-            <AgentStatusCapabilitiesBar data={agentStatusData} onToggleApprovalMode={setApprovalMode} onEmergencyStop={() => setAgentStopped(true)} onSSHAction={handleSshAction} onSkillClick={setActiveAgentSkillId} />
+            <AgentStatusCapabilitiesBar
+              data={agentStatusData}
+              hasApiKey={hasApiKey}
+              onOpenSettings={() => { setSettingsSection("keys"); setSettingsOpen(true); }}
+              onToggleApprovalMode={setApprovalMode}
+              onEmergencyStop={() => setAgentStopped(true)}
+              onSSHAction={handleSshAction}
+              onSkillClick={setActiveAgentSkillId}
+            />
 
           </section>
 
