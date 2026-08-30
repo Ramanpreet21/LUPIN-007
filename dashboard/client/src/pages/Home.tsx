@@ -1090,41 +1090,24 @@ export default function Home() {
 
             <HealthSummaryCard data={health.data} isLoading={health.isLoading} error={health.error} />
 
-            <div className="flex items-center justify-between px-1.5 pt-1">
-              <div className="flex items-center gap-1 bg-white/[0.04] p-0.5 rounded-lg border border-white/5">
-                {workspaceCardDefinitions.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => {
-                      setActiveWorkspaceCardId(c.id);
-                      setArchiveFanoutOpen(false);
-                    }}
-                    className={`px-2 py-0.5 rounded text-[10px] font-mono transition-all ${
-                      activeWorkspaceCardId === c.id
-                        ? "bg-emerald-400/20 text-emerald-300 font-medium shadow-sm border border-emerald-400/30"
-                        : "text-white/40 hover:text-white/80 hover:bg-white/5 border border-transparent"
-                    }`}
-                  >
-                    {c.label}
-                  </button>
-                ))}
-              </div>
-              <button
-                type="button"
-                onClick={() => setArchiveFanoutOpen((open) => !open)}
-                className="text-white/40 hover:text-emerald-300 hover:bg-white/5 p-1 rounded-md transition-colors"
-                title={archiveFanoutOpen ? "Close stack" : "Fan out card stack"}
-                aria-label="Toggle card stack"
-              >
-                <ArrowUpRight size={14} />
-              </button>
-            </div>
-
             <article className="archive-module glass-surface is-workspace-card">
+              <div className="archive-module-header">
+                <span className="archive-module-title">Workspace Insight</span>
+                <div className="archive-switcher-tabs">
+                  {workspaceCardDefinitions.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setActiveWorkspaceCardId(c.id)}
+                      className={`archive-switcher-tab ${activeWorkspaceCardId === c.id ? "is-active" : ""}`}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="archive-workspace-card">{renderWorkspaceCard()}</div>
             </article>
-            <section className={`archive-fanout archive-fanout--stack ${archiveFanoutOpen ? "is-open" : ""}`} aria-label="Available lower-right card options">{availableWorkspaceCards.map((card) => <article className="archive-fan-card" key={card.id} aria-label={`${card.label} preview`}><div className="archive-fan-card-preview" aria-hidden="true" inert>{renderWorkspaceCard(card.id, true)}</div><button className="archive-fan-card-select" type="button" onClick={() => { setActiveWorkspaceCardId(card.id); setArchiveFanoutOpen(false); }} aria-label={`Show ${card.label}`} /></article>)}</section>
           </section>
           </>}
 
