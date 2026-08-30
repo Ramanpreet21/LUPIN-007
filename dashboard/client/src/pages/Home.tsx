@@ -144,13 +144,7 @@ const navItems: { id: SystemViewId; label: string; icon: typeof Grid2X2 }[] = [
 
 const viewIdFromPath = (): SystemViewId => (Object.entries(systemViewPaths).find(([, path]) => path === window.location.pathname)?.[0] as SystemViewId | undefined) ?? "COMMAND_DECK";
 
-const initialConversation: ConversationMessage[] = [
-  { id: "conv-01", role: "system", label: "SYSTEM", time: "09:12", content: "Conversation relay synchronized with the current control-plane session." },
-  { id: "conv-02", role: "assistant", label: "LUPIN", time: "09:13", content: "I have indexed the active workspace, retained the session context, and am ready for the next operational request." },
-  { id: "conv-03", role: "user", label: "OPERATOR", time: "09:14", content: "Summarize the outstanding work and keep me informed when a backend action requires review." },
-  { id: "conv-04", role: "assistant", label: "LUPIN", time: "09:14", content: "Three safeguards remain active. I will surface backend-initiated action requests in the notch without interrupting the conversation history." },
-  { id: "conv-05", role: "assistant", label: "LUPIN", time: "09:15", content: "The current telemetry stream is healthy. Connection controls and policy-gated operations remain available in their dedicated management surfaces." },
-];
+const initialConversation: ConversationMessage[] = [];
 
 function createWorkspaceClip(width: number, height: number): WorkspaceClip {
   const isMobile = window.innerWidth <= 540;
@@ -1010,7 +1004,14 @@ export default function Home() {
               </div>
               <section className="conversation-viewport" ref={conversationViewportRef} aria-label="AI conversation history" tabIndex={0}>
                 <div className="conversation-list">
-                  {conversationMessages.map((message) => <article className={`conversation-message conversation-message--${message.role}`} key={message.id}><div className="conversation-message-meta"><span>{message.role === "assistant" && <img src="/brand-logo.png" alt="Incident Command Deck" className="h-8 w-8 object-contain" />}{message.label}</span><time>{message.time}</time></div><p>{message.content}</p></article>)}
+                  {conversationMessages.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full min-h-[140px] text-center text-white/30 space-y-1">
+                      <p className="text-xs">No conversation messages yet.</p>
+                      <span className="text-[10px] text-white/20">Ask Lupin a question or run a diagnostic to get started.</span>
+                    </div>
+                  ) : (
+                    conversationMessages.map((message) => <article className={`conversation-message conversation-message--${message.role}`} key={message.id}><div className="conversation-message-meta"><span>{message.role === "assistant" && <img src="/brand-logo.png" alt="Incident Command Deck" className="h-8 w-8 object-contain" />}{message.label}</span><time>{message.time}</time></div><p>{message.content}</p></article>)
+                  )}
                 </div>
               </section>
               {notchMenuOpen ? <section className={`workspace-backend-popup ${backendPopup.priority === "attention" ? "is-attention" : ""}`} aria-label="Backend action popup"><div className="workspace-popup-head"><span className="workspace-popup-indicator"><TriangleAlert size={13} /></span><div><p className="eyebrow">{backendPopup.source}</p><strong>{backendPopup.title}</strong></div></div><p>{backendPopup.detail}</p><div className="workspace-popup-actions"><button type="button" onClick={() => setBackendPopup((current) => ({ ...current, title: "Review queued", detail: "The action request has been routed to the protected review queue.", priority: "routine" }))}>Review</button><button type="button" onClick={() => setConversationMessages((current) => [...current, { id: `backend-${Date.now()}`, role: "system", label: "BACKEND", time: "NOW", content: `Action ${backendPopup.id} was added to the conversation review history.` }])}>History</button><button type="button" onClick={() => setNotchMenuOpen(false)}>Dismiss</button></div></section> : <form className="workspace-input" onSubmit={submitConversation}><button type="submit" aria-label="Send message"><Send size={16} /></button><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Ask Lupin about the active workspace…" aria-label="Ask Lupin about the active workspace" /><kbd>↵</kbd></form>}
