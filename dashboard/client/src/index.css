@@ -196,14 +196,16 @@ kbd { display: inline-grid; place-items: center; min-width: 21px; height: 18px; 
 .side-modules::-webkit-scrollbar-thumb:hover {
   background: rgba(108, 243, 201, 0.45);
 }
-.side-modules > * {
-  flex-shrink: 0;
-}
-.side-modules .health-flip-scene {
-  min-height: 250px;
-}
+.side-modules > *,
+.side-modules .incident-deck,
+.side-modules .terminal-module,
+.side-modules .health-flip-scene,
 .side-modules .archive-module {
-  min-height: 280px;
+  height: 240px;
+  min-height: 240px;
+  max-height: 240px;
+  flex-shrink: 0;
+  box-sizing: border-box;
 }
 .weather-module, .signal-module, .archive-module { min-height: 0; padding: 17px; border-radius: 21px; }
 .module-heading { position: relative; z-index: 5; justify-content: space-between; }.mini-dot-button { width: 25px; height: 25px; border-radius: 8px; color: rgba(255,255,255,.5); }.mini-dot-button:hover { color: white; background: rgba(255,255,255,.08); }
