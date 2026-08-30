@@ -3,3 +3,4 @@ dist/
 .env
 .serena/
 *.log
+data/
