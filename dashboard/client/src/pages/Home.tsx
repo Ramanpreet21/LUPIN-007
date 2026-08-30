@@ -338,7 +338,7 @@ export default function Home() {
         <aside className={`control-rail glass-surface ${railExpanded ? "is-expanded" : ""}`} aria-label="Primary navigation" onClick={() => { if (!railExpanded) setRailExpanded(true); }}>
           <div className="rail-brand-row">
             <div className="brand-lockup">
-              <img className="brand-mark" src="/manus-storage/lupin-mark-transparent_ac979561.png" alt="Lupin" />
+              <img src="/brand-logo.png" alt="Incident Command Deck" className="h-8 w-8 object-contain" />
               <span className="brand-word">LUPIN</span>
             </div>
             {railExpanded && <button className="rail-collapse" type="button" onClick={() => { setProfileOpen(false); setRailExpanded(false); }} aria-label="Collapse navigation rail"><ChevronsLeft size={17} strokeWidth={1.7} /></button>}
@@ -394,7 +394,7 @@ export default function Home() {
               </div>
               <section className="conversation-viewport" ref={conversationViewportRef} aria-label="AI conversation history" tabIndex={0}>
                 <div className="conversation-list">
-                  {conversationMessages.map((message) => <article className={`conversation-message conversation-message--${message.role}`} key={message.id}><div className="conversation-message-meta"><span>{message.role === "assistant" && <img className="assistant-brand-mark" src="/manus-storage/lupin-mark-transparent_ac979561.png" alt="" />}{message.label}</span><time>{message.time}</time></div><p>{message.content}</p></article>)}
+                  {conversationMessages.map((message) => <article className={`conversation-message conversation-message--${message.role}`} key={message.id}><div className="conversation-message-meta"><span>{message.role === "assistant" && <img src="/brand-logo.png" alt="Incident Command Deck" className="h-8 w-8 object-contain" />}{message.label}</span><time>{message.time}</time></div><p>{message.content}</p></article>)}
                 </div>
               </section>
               {notchMenuOpen ? <section className={`workspace-backend-popup ${backendPopup.priority === "attention" ? "is-attention" : ""}`} aria-label="Backend action popup"><div className="workspace-popup-head"><span className="workspace-popup-indicator"><TriangleAlert size={13} /></span><div><p className="eyebrow">{backendPopup.source}</p><strong>{backendPopup.title}</strong></div></div><p>{backendPopup.detail}</p><div className="workspace-popup-actions"><button type="button" onClick={() => setBackendPopup((current) => ({ ...current, title: "Review queued", detail: "The action request has been routed to the protected review queue.", priority: "routine" }))}>Review</button><button type="button" onClick={() => setConversationMessages((current) => [...current, { id: `backend-${Date.now()}`, role: "system", label: "BACKEND", time: "NOW", content: `Action ${backendPopup.id} was added to the conversation review history.` }])}>History</button><button type="button" onClick={() => setNotchMenuOpen(false)}>Dismiss</button></div></section> : <form className="workspace-input" onSubmit={submitConversation}><button type="submit" aria-label="Send message"><Send size={16} /></button><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Ask Lupin about the active workspace…" aria-label="Ask Lupin about the active workspace" /><kbd>↵</kbd></form>}

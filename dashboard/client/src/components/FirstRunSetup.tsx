@@ -209,7 +209,7 @@ export function FirstRunSetup({
     <main className={`first-run-setup ${className}`.trim()} aria-label="Lupin first-run setup">
       <section className="setup-instrument-frame">
         <aside className="setup-progress-rail">
-          <div className="setup-brand"><img src="/manus-storage/lupin-mark-transparent_ac979561.png" alt="Lupin" /><span>LUPIN</span></div>
+          <div className="setup-brand"><img src="/brand-logo.png" alt="Incident Command Deck" className="h-10 w-10 object-contain" /><span>LUPIN</span></div>
           <div className="setup-progress-copy"><p className="eyebrow">First-run sequence</p><strong>Calibrate the control plane.</strong><span>Configuration is local to this browser until a secure backend is connected.</span></div>
           <ol className="setup-step-list">
             {steps.map((item, index) => {
