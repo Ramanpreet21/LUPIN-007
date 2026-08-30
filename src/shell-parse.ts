@@ -191,3 +191,26 @@ export function effectiveCommand(statement: string): string {
   }
   return statement.slice(tokens[i]?.start ?? 0);
 }
+
+/**
+ * Recursively extract all individual executable statements from a command,
+ * splitting compound operators (;, &&, ||, |, \n) and unwrapping subshells/wrappers.
+ */
+export function extractCompoundStatements(command: string): string[] {
+  const topSegments = splitShellStatements(command);
+  const result: string[] = [];
+
+  for (const seg of topSegments) {
+    const effective = effectiveCommand(seg);
+    if (effective !== seg) {
+      const subSegments = splitShellStatements(effective);
+      if (subSegments.length > 1 || (subSegments.length === 1 && subSegments[0] !== seg)) {
+        result.push(...extractCompoundStatements(effective));
+        continue;
+      }
+    }
+    result.push(seg);
+  }
+  return result.length > 0 ? result : [command];
+}
+

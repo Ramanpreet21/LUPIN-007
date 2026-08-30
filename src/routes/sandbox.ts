@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import type { Logger } from "../logger";
 import type { TrueForgeHandle } from "../trueforge";
-import { getSandboxSettings, updateSandboxSettings } from "../sandbox-settings";
+import { getSandboxSettings, updateSandboxSettings, setDaytonaApiKey } from "../sandbox-settings";
 import { getSandboxManager } from "../sandboxes/manager";
 import type { SandboxType } from "../sandboxes/types";
 import { getDb } from "../db";
@@ -19,6 +19,25 @@ export interface SandboxRouterOptions {
   getTf: () => TrueForgeHandle;
   logger: Logger;
   broadcast?: (message: unknown) => void;
+  /** Bearer token for the settings API. When set, mutating endpoints require it. */
+  apiToken?: string;
+}
+
+/**
+ * Middleware: validates Authorization: Bearer <token> on sensitive settings routes.
+ * Returns 401 if a token is configured but the request has no matching header.
+ */
+function requireApiToken(token: string | undefined) {
+  return (req: Request, res: Response, next: () => void): void => {
+    if (!token) { next(); return; }
+    const header = (req.headers["authorization"] ?? "") as string;
+    const match = header.toLowerCase().startsWith("bearer ");
+    if (!match || header.slice(7).trim() !== token) {
+      res.status(401).json({ error: "unauthorized", details: ["Valid Authorization header required."] });
+      return;
+    }
+    next();
+  };
 }
 
 /**
@@ -29,7 +48,7 @@ export interface SandboxRouterOptions {
  * - GET /api/settings/sandbox (retrieves current sandbox settings)
  * - PUT /api/settings/sandbox (persists and activates sandbox provider)
  */
-export function createSandboxRouter({ getTf, logger, broadcast }: SandboxRouterOptions): Router {
+export function createSandboxRouter({ getTf, logger, broadcast, apiToken }: SandboxRouterOptions): Router {
   const router = Router();
   const manager = getSandboxManager();
 
@@ -102,9 +121,12 @@ export function createSandboxRouter({ getTf, logger, broadcast }: SandboxRouterO
       }
 
       // Local container or subprocess isolation is locally configured
+      const runner = manager.getRunner(activeProvider as SandboxType);
+      const probe = await runner.probe(activeUrl ? { socketPath: activeUrl } : undefined);
       res.json({
-        configured: true,
-        status: "ready",
+        configured: probe.available,
+        status: probe.available ? "ready" : "error",
+        errorReason: probe.available ? undefined : probe.error,
         provider: activeProvider,
         serverUrl: activeUrl,
       });
@@ -115,7 +137,7 @@ export function createSandboxRouter({ getTf, logger, broadcast }: SandboxRouterO
   });
 
   // 5. Update / Configure active sandbox provider
-  router.put("/api/settings/sandbox", async (req: Request, res: Response) => {
+  router.put("/api/settings/sandbox", requireApiToken(apiToken), async (req: Request, res: Response) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const providerType = (body.type as SandboxType) || (body.provider as SandboxType) || "daytona";
     const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
@@ -128,7 +150,7 @@ export function createSandboxRouter({ getTf, logger, broadcast }: SandboxRouterO
     }
 
     // Require apiKey for Daytona Cloud or Dedicated
-    if ((providerType === "daytona" || providerType === "daytona-custom" || !body.type) && !apiKey) {
+    if ((providerType === "daytona" || providerType === "daytona-custom") && !apiKey) {
       res.status(400).json({ error: "invalid_payload", details: ["apiKey must be a non-empty string"] });
       return;
     }
@@ -165,6 +187,21 @@ export function createSandboxRouter({ getTf, logger, broadcast }: SandboxRouterO
         res.status(500).json({ error: "internal_error" });
         return;
       }
+    } else {
+      // Local runtime: verify runner is probed successfully before reporting calibrated
+      const runner = manager.getRunner(providerType);
+      const probe = await runner.probe(serverUrl ? { socketPath: serverUrl } : undefined);
+      if (!probe.available) {
+        res.status(400).json({
+          error: "sandbox_probe_failed",
+          details: [probe.error || `${providerType} runtime probe failed`],
+        });
+        return;
+      }
+    }
+
+    if (apiKey) {
+      setDaytonaApiKey(apiKey);
     }
 
     try {
@@ -172,7 +209,6 @@ export function createSandboxRouter({ getTf, logger, broadcast }: SandboxRouterO
       const upsert = db.prepare("INSERT INTO settings (key, value) VALUES (@key, @value) ON CONFLICT(key) DO UPDATE SET value = @value");
       upsert.run({ key: "sandbox_provider", value: providerType });
       upsert.run({ key: "sandbox_url", value: serverUrl });
-      if (apiKey) upsert.run({ key: "sandbox_key", value: apiKey });
     } catch {
       // Fallback for test stubs
     }
@@ -231,4 +267,5 @@ export function createSandboxRouter({ getTf, logger, broadcast }: SandboxRouterO
   });
   return router;
 }
+
 

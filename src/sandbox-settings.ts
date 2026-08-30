@@ -126,6 +126,20 @@ export async function getSandboxSettings(
   return { configured: true, status: "pending" };
 }
 
+let daytonaApiKeyStore: string | undefined = undefined;
+
+export function setDaytonaApiKey(key: string): void {
+  daytonaApiKeyStore = key;
+}
+
+export function getDaytonaApiKey(): string | undefined {
+  return daytonaApiKeyStore;
+}
+
+export function resetSandboxSettings(): void {
+  daytonaApiKeyStore = undefined;
+}
+
 /**
  * Configure the TrueForge sandbox provider with the operator's Daytona API key.
  * The provider is the source of truth for the settings; a bad key is rejected
@@ -146,5 +160,7 @@ export async function updateSandboxSettings(
   await client.createOrUpdate({
     manifest: manifest as unknown as TrueForgeApi.SandboxProviderManifest,
   });
+  setDaytonaApiKey(apiKey);
   return getSandboxSettings(client);
 }
+

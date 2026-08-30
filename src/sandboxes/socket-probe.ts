@@ -46,11 +46,11 @@ export function probeUnixSocket(socketPath: string, timeoutMs = 1500): Promise<{
 }
 
 /**
- * Probes whether a CLI binary exists and executes cleanly.
+ * Probes whether a container CLI binary exists and its daemon is usable.
  */
-export async function probeCliBinary(binaryName: string): Promise<{ ok: boolean; version?: string; error?: string }> {
+export async function probeCliBinary(binaryName: string, env?: NodeJS.ProcessEnv): Promise<{ ok: boolean; version?: string; error?: string }> {
   try {
-    const { stdout } = await execFileAsync(binaryName, ["--version"], { timeout: 3000 });
+    const { stdout } = await execFileAsync(binaryName, ["info"], { timeout: 3000, env });
     return { ok: true, version: stdout.trim().split("\n")[0] };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

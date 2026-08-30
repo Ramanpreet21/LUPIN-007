@@ -2,16 +2,11 @@
 import { loadConfig, parsePort } from "./config";
 import { createLogger, type Logger } from "./logger";
 import { initTrueForge } from "./trueforge";
-import { initDb, closeDb } from "./db";
+import { initDb } from "./db";
 import { startServer } from "./server";
 import { createIncidentRouter } from "./incident-plane";
 import { createSandboxRouter } from "./routes/sandbox";
-import { createDemoRouter } from "./routes/demo";
-import { createPolicyRouter } from "./routes/policy";
-import { createFleetRouter } from "./routes/fleet";
-import { createModelsRouter } from "./routes/models";
-import { createSettingsRouter } from "./routes/settings";
-import { createSessionsRouter } from "./routes/sessions";
+
 import { createModelRouter } from "./routes/model";
 import { runTrueForgeSetup } from "./trueforge-setup";
 import { buildLocalMcpUrl } from "./mcp-provider";
@@ -81,12 +76,12 @@ async function main(): Promise<void> {
   const config = loadConfig(process.env, { port: args.port, host: args.host });
   const logger: Logger = createLogger(config.logLevel);
 
-  initDb();
-
   const tf = initTrueForge(
     { baseUrl: config.trueforgeBaseUrl, token: config.trueforgeToken },
     logger,
   );
+
+  initDb();
 
   let server;
   try {
@@ -97,13 +92,7 @@ async function main(): Promise<void> {
       getStatus: () => tf.status,
       registerRoutes: (app, { broadcast }) => {
         app.use(createIncidentRouter({ getTf: () => tf, logger, broadcast, model: config.trueforgeModel }));
-        app.use(createSandboxRouter({ getTf: () => tf, logger, broadcast }));
-        app.use(createDemoRouter({ logger, broadcast, port: config.port }));
-        app.use(createPolicyRouter({ logger }));
-        app.use(createFleetRouter({ logger, broadcast }));
-        app.use(createModelsRouter({ getTf: () => tf, logger }));
-        app.use(createSettingsRouter({ getTf: () => tf, logger, broadcast }));
-        app.use(createSessionsRouter({ getTf: () => tf, logger, broadcast, model: config.trueforgeModel }));
+        app.use(createSandboxRouter({ getTf: () => tf, logger, broadcast, apiToken: config.controlPlaneApiToken }));
         app.use(createModelRouter({ logger, getTf: () => tf, model: config.trueforgeModel, apiToken: config.controlPlaneApiToken }));
       },
     });
@@ -131,14 +120,7 @@ async function main(): Promise<void> {
       void server
         .close()
         .catch((err: unknown) => logger.error({ event: "shutdown_error", err }, "error during shutdown"))
-        .finally(() => {
-          try {
-            closeDb();
-          } catch (err) {
-            logger.error({ event: "shutdown_db_error", err }, "error closing database");
-          }
-          process.exit(0);
-        });
+        .finally(() => process.exit(0));
     });
   }
 }
