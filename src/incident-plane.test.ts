@@ -750,7 +750,7 @@ test("session creation enables the sandbox with the configured model FQN", async
       };
     };
     // No name-ref shortcut: sandbox mode + the responder prompt live on the spec body.
-    assert.equal(request.agent.spec.config.sandbox.enabled, true);
+    assert.equal(request.agent.spec.config.sandbox.enabled, false);
     // Router-constructed default here; index.ts injects the TRUEFORGE_MODEL value.
     assert.equal(request.agent.spec.model.name, "anthropic/claude-sonnet-5");
     // The responder prompt rides as system instructions, not a user message (qodo #6).

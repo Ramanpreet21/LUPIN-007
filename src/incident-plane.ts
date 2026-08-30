@@ -232,7 +232,7 @@ export function createIncidentRouter({
           spec: {
             model: { name: model },
             instructions: INCIDENT_RESPONDER_PROMPT,
-            config: { sandbox: { enabled: true } },
+            config: { sandbox: { enabled: false } },
             // 5b: attach the local read-only MCP connector. All tools are
             // read-only, so enableTools lists them explicitly (derived from the
             // provider's TOOL_NAMES); the write/destructive selectors keep the
