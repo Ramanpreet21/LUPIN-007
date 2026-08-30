@@ -227,7 +227,7 @@ export function createIncidentRouter({
       let activeModel = model;
       try {
         const row = getDb().prepare("SELECT value FROM settings WHERE key = 'model'").get() as { value?: string } | undefined;
-        if (row?.value) activeModel = row.value;
+        if (row?.value && row.value !== "google-gemini/gemini-3-6-flash") activeModel = row.value;
       } catch { /* fallback */ }
 
       const { data } = await client.sessions.create({
