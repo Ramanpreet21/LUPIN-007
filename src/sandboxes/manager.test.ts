@@ -16,9 +16,17 @@ test("SandboxManager registers all 5 runner types and probes them", async () => 
   assert.ok(types.includes("daytona-custom"));
 });
 
-test("SandboxManager executes in active sandbox runner", async () => {
+test("SandboxManager retrieves active sandbox runner", async () => {
   const manager = new SandboxManager();
-  const res = await manager.execInActive("echo 'manager test'");
-  assert.equal(res.exitCode, 0);
-  assert.ok(res.stdout.includes("manager test") || res.stdout.includes("Executed"));
+  const runner = manager.getActiveRunner();
+  assert.ok(runner);
+  assert.equal(runner.type, "isolated-local");
+  const session = await runner.createSession("test-mgr");
+  try {
+    const res = await runner.exec(session.sandboxId, "echo 'manager test'");
+    assert.equal(res.exitCode, 0);
+    assert.ok(res.stdout.includes("manager test"));
+  } finally {
+    await runner.destroySession(session.sandboxId);
+  }
 });
