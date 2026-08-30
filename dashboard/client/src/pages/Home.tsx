@@ -88,6 +88,36 @@ type SettingsSection = "general" | "sandbox" | "keys" | "mcp" | "skills";
 type ConversationMessage = { id: string; role: "assistant" | "user" | "system"; label: string; time: string; content: string };
 type BackendPopup = { id: string; source: string; title: string; detail: string; priority: "attention" | "routine" };
 
+export interface SkillConfig {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export interface McpConfig {
+  id: string;
+  name: string;
+  description: string;
+  url: string;
+  authType: "OAuth" | "None" | "API Key";
+}
+
+export const PRECONFIGURED_SKILLS: SkillConfig[] = [
+  { id: "diagnostic", name: "Root Cause Diagnosis", description: "Analyzes system telemetry, kernel ring buffers, and systemd units to locate incident faults." },
+  { id: "remediation", name: "Service Remediation", description: "Automated service recovery, unit restart, and memory-leak isolation runbooks." },
+  { id: "log-anomaly", name: "Log Anomaly Detector", description: "Detects spike anomalies, error bursts, and structured syslog crash traces." },
+  { id: "network-guard", name: "Network Isolation Guard", description: "Enforces egress rules and validates outbound requests during troubleshooting." },
+  { id: "disk-cleanup", name: "Disk Space Remediation", description: "Safely rotates expired journals and prunes unreachable container layer caches." },
+  { id: "runbook", name: "Runbook Automation", description: "Executes verified SRE runbook sequences against monitored infrastructure." },
+];
+
+export const PRECONFIGURED_MCPS: McpConfig[] = [
+  { id: "ssh", name: "SSH Remote Inspector", description: "Model Context Protocol adapter for secure SSH shell and remote execution.", url: "mcp://ssh.internal:8000", authType: "API Key" },
+  { id: "cli", name: "Host CLI Runner", description: "Executes sandboxed host inspection commands under policy guardrails.", url: "mcp://cli.internal:8001", authType: "None" },
+  { id: "filesystem", name: "Filesystem Audit Tool", description: "Read-only filesystem scanner for config inspection and diffing.", url: "mcp://fs.internal:8002", authType: "None" },
+  { id: "k8s", name: "Kubernetes Engine Adapter", description: "Queries pod status, deployment logs, and cluster events.", url: "https://k8s-mcp.internal/v1", authType: "OAuth" },
+];
+
 const transportToSshStatus: Record<ControlPlaneConnectionStatus, SSHStatus> = {
   CONNECTING: "RECONNECTING",
   CONNECTED: "CONNECTED",
@@ -183,7 +213,11 @@ export default function Home() {
   const [sandboxSaving, setSandboxSaving] = useState(false);
   const [settingsData, setSettingsData] = useState<Record<string, string>>({});
   const [newSkillName, setNewSkillName] = useState("");
+  const [newSkillDesc, setNewSkillDesc] = useState("");
   const [newMcpName, setNewMcpName] = useState("");
+  const [newMcpDesc, setNewMcpDesc] = useState("");
+  const [newMcpUrl, setNewMcpUrl] = useState("");
+  const [newMcpAuthType, setNewMcpAuthType] = useState<"None" | "API Key" | "OAuth">("None");
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -193,12 +227,36 @@ export default function Home() {
       .catch(() => {});
   }, [settingsOpen]);
 
-  const skills = useMemo(() => {
-    try { return JSON.parse(settingsData.skills ?? "[]") as string[]; } catch { return []; }
+  const skills = useMemo<SkillConfig[]>(() => {
+    try {
+      const raw = JSON.parse(settingsData.skills ?? "[]");
+      if (!Array.isArray(raw) || raw.length === 0) return PRECONFIGURED_SKILLS.slice(0, 3);
+      return raw.map((item) => {
+        if (typeof item === "string") {
+          const pre = PRECONFIGURED_SKILLS.find((p) => p.id === item || p.name.toLowerCase() === item.toLowerCase());
+          return pre || { id: item, name: item.charAt(0).toUpperCase() + item.slice(1), description: "Autonomous capability" };
+        }
+        return item as SkillConfig;
+      });
+    } catch {
+      return PRECONFIGURED_SKILLS.slice(0, 3);
+    }
   }, [settingsData.skills]);
 
-  const mcps = useMemo(() => {
-    try { return JSON.parse(settingsData.mcps ?? "[]") as string[]; } catch { return []; }
+  const mcps = useMemo<McpConfig[]>(() => {
+    try {
+      const raw = JSON.parse(settingsData.mcps ?? "[]");
+      if (!Array.isArray(raw) || raw.length === 0) return PRECONFIGURED_MCPS.slice(0, 3);
+      return raw.map((item) => {
+        if (typeof item === "string") {
+          const pre = PRECONFIGURED_MCPS.find((p) => p.id === item || p.name.toLowerCase() === item.toLowerCase());
+          return pre || { id: item, name: item.toUpperCase(), description: "Model Context Protocol plugin", url: `mcp://${item}.internal`, authType: "None" };
+        }
+        return item as McpConfig;
+      });
+    } catch {
+      return PRECONFIGURED_MCPS.slice(0, 3);
+    }
   }, [settingsData.mcps]);
   const [sshConnections, setSshConnections] = useState(() => [
     { id: "primary-target", hostname: storedSetup?.ssh.targetHost ?? "relay-04.lan", address: `SSH · ${storedSetup?.ssh.sshPort ?? 22}`, status: storedSetup?.launchMode === "LIVE_HOST" ? "READY" : "CONNECTED", latency: storedSetup?.launchMode === "LIVE_HOST" ? "—" : "1 ms" },
@@ -376,23 +434,26 @@ export default function Home() {
       session: { ...defaultAgentStatus.session, hostname: activeTarget.host, targetIp: `SSH · ${activeTarget.port}`, sshStatus: transportToSshStatus[controlPlane.status], latencyMs: controlPlane.status === "CONNECTED" ? defaultAgentStatus.session.latencyMs : 0 },
       engine: { ...defaultAgentStatus.engine, socketConnected: controlPlane.status === "CONNECTED" },
       activeSkillId: activeAgentSkillId,
-      skills: defaultAgentStatus.skills.map((skill) =>
-        skill.id === activeAgentSkillId && skill.status !== "RESTRICTED"
-          ? { ...skill, status: controlPlane.isExecuting ? "EXECUTING" : "READY" }
-          : skill,
-      ),
+      skills: skills.map((skill) => ({
+        id: skill.id,
+        displayName: skill.name,
+        category: "ANALYSIS",
+        status: (skill.id === activeAgentSkillId || skill.name.toLowerCase() === activeAgentSkillId?.toLowerCase()) && controlPlane.isExecuting ? "EXECUTING" : "READY",
+        executionPolicy: "AUTONOMOUS",
+      })),
       safety: { ...defaultAgentStatus.safety, approvalMode, isExecuting: controlPlane.isExecuting && !agentStopped },
       policy: { ...defaultAgentStatus.policy, blockedCommandCount: controlPlane.blockedExecutionCount },
       telemetry: { ...defaultAgentStatus.telemetry, activeModel: selectedModel },
     }),
-    [activeAgentSkillId, activeTarget, agentStopped, approvalMode, controlPlane.status, controlPlane.isExecuting, controlPlane.blockedExecutionCount, selectedModel],
+    [activeAgentSkillId, activeTarget, agentStopped, approvalMode, controlPlane.status, controlPlane.isExecuting, controlPlane.blockedExecutionCount, selectedModel, skills],
   );
   const handleSshAction = (action: "RECONNECT" | "CLEAR_SCROLLBACK" | "SPAWN_SUBSHELL") => { if (action === "RECONNECT") { setSshStatus("RECONNECTING"); window.setTimeout(() => setSshStatus("CONNECTED"), 750); } };
   const addSshConnection = () => setSshConnections((current) => [...current, { id: `node-${current.length + 1}`, hostname: `node-${current.length + 1}.lan`, address: "SSH · 22", status: "DRAFT", latency: "—" }]);
-  const handleAddSkill = useCallback(async (name: string) => {
-    const trimmed = name.trim();
-    if (!trimmed || skills.includes(trimmed)) return;
-    const updated = [...skills, trimmed];
+
+  const handleAddSkill = useCallback(async (skill: SkillConfig) => {
+    const trimmedName = skill.name.trim();
+    if (!trimmedName || skills.some((s) => s.id === skill.id || s.name.toLowerCase() === trimmedName.toLowerCase())) return;
+    const updated = [...skills, { ...skill, name: trimmedName }];
     const raw = JSON.stringify(updated);
     setSettingsData((prev) => ({ ...prev, skills: raw }));
     try {
@@ -401,14 +462,14 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ skills: raw }),
       });
-      setSettingsNotice(`Skill "${trimmed}" added.`);
+      setSettingsNotice(`Skill "${trimmedName}" added.`);
     } catch (err) {
       console.error("Failed to add skill:", err);
     }
   }, [skills]);
 
-  const handleRemoveSkill = useCallback(async (name: string) => {
-    const updated = skills.filter((s) => s !== name);
+  const handleRemoveSkill = useCallback(async (id: string) => {
+    const updated = skills.filter((s) => s.id !== id && s.name !== id);
     const raw = JSON.stringify(updated);
     setSettingsData((prev) => ({ ...prev, skills: raw }));
     try {
@@ -417,16 +478,17 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ skills: raw }),
       });
-      setSettingsNotice(`Skill "${name}" removed.`);
+      setSettingsNotice("Skill removed.");
     } catch (err) {
       console.error("Failed to remove skill:", err);
     }
   }, [skills]);
 
-  const handleAddMcp = useCallback(async (name: string) => {
-    const trimmed = name.trim();
-    if (!trimmed || mcps.includes(trimmed)) return;
-    const updated = [...mcps, trimmed];
+  const handleAddMcp = useCallback(async (mcp: McpConfig) => {
+    const trimmedName = mcp.name.trim();
+    const trimmedUrl = mcp.url.trim();
+    if (!trimmedName || !trimmedUrl || mcps.some((m) => m.id === mcp.id || m.name.toLowerCase() === trimmedName.toLowerCase())) return;
+    const updated = [...mcps, { ...mcp, name: trimmedName, url: trimmedUrl }];
     const raw = JSON.stringify(updated);
     setSettingsData((prev) => ({ ...prev, mcps: raw }));
     try {
@@ -435,14 +497,14 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mcps: raw }),
       });
-      setSettingsNotice(`MCP connection "${trimmed}" added.`);
+      setSettingsNotice(`MCP connection "${trimmedName}" added.`);
     } catch (err) {
       console.error("Failed to add MCP:", err);
     }
   }, [mcps]);
 
-  const handleRemoveMcp = useCallback(async (name: string) => {
-    const updated = mcps.filter((m) => m !== name);
+  const handleRemoveMcp = useCallback(async (id: string) => {
+    const updated = mcps.filter((m) => m.id !== id && m.name !== id);
     const raw = JSON.stringify(updated);
     setSettingsData((prev) => ({ ...prev, mcps: raw }));
     try {
@@ -451,11 +513,12 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mcps: raw }),
       });
-      setSettingsNotice(`MCP connection "${name}" removed.`);
+      setSettingsNotice("MCP connection removed.");
     } catch (err) {
       console.error("Failed to remove MCP:", err);
     }
   }, [mcps]);
+
   const submitConversation = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const message = draft.trim();
@@ -473,6 +536,21 @@ export default function Home() {
     window.addEventListener("luma:backend-popup", openBackendPopup as EventListener);
     return () => window.removeEventListener("luma:backend-popup", openBackendPopup as EventListener);
   }, []);
+
+  useEffect(() => {
+    const pendingIncident = controlPlane.incidents.find((i) => i.pending);
+    if (pendingIncident?.pending) {
+      const p = pendingIncident.pending;
+      setBackendPopup({
+        id: pendingIncident.incident_id,
+        source: `Incident ${pendingIncident.incident_id}`,
+        title: "Action approval required",
+        detail: p.proposed_command || (p.proposed_commands?.[0] ?? "A destructive command requires operator approval before execution."),
+        priority: "attention",
+      });
+      setNotchMenuOpen(true);
+    }
+  }, [controlPlane.incidents]);
 
   useEffect(() => {
     const viewport = conversationViewportRef.current;
@@ -846,7 +924,6 @@ export default function Home() {
               {workspaceClip ? <svg className="workspace-notch-outline" aria-hidden="true" viewBox={`-1 -1 ${workspaceClip.width + 2} ${workspaceClip.height + 2}`} preserveAspectRatio="none"><path d={workspaceClip.notchOutlinePath} /></svg> : null}
               <div className="focus-topbar">
                 <div className="status-chip"><span className="live-dot" /> CONVERSATION LIVE</div>
-                <button className="icon-control ghost-control" type="button" onClick={() => setNotchMenuOpen(true)} aria-label="Preview backend action popup"><MoreHorizontal size={19} /></button>
               </div>
               <section className="conversation-viewport" ref={conversationViewportRef} aria-label="AI conversation history" tabIndex={0}>
                 <div className="conversation-list">
@@ -973,19 +1050,26 @@ export default function Home() {
                   <div className="settings-section-heading">
                     <div>
                       <h3>MCP connections</h3>
-                      <p>Manage connected Model Context Protocol services and their current availability.</p>
+                      <p>Manage connected Model Context Protocol services and their authentication parameters.</p>
                     </div>
                     <Cable size={18} />
                   </div>
+
                   <div className="connection-list">
                     {mcps.map((mcp) => (
-                      <div className="connection-row" key={mcp}>
-                        <div>
-                          <strong>{mcp}</strong>
-                          <span>Model Context Protocol plugin</span>
+                      <div className="connection-row" key={mcp.id || mcp.name}>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <strong>{mcp.name}</strong>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 font-mono border border-emerald-500/20">
+                              {mcp.authType}
+                            </span>
+                          </div>
+                          <p className="text-xs text-white/50 truncate mt-0.5">{mcp.description}</p>
+                          <small className="text-[10px] text-white/30 font-mono block truncate">{mcp.url}</small>
                         </div>
-                        <em className="is-connected">CONNECTED</em>
-                        <button type="button" onClick={() => handleRemoveMcp(mcp)} title={`Remove ${mcp}`}>
+                        <em className="is-connected shrink-0">CONNECTED</em>
+                        <button type="button" onClick={() => handleRemoveMcp(mcp.id || mcp.name)} title={`Remove ${mcp.name}`}>
                           <Trash2 size={13} /> Remove
                         </button>
                       </div>
@@ -994,24 +1078,91 @@ export default function Home() {
                       <p className="text-xs text-white/50 py-2">No MCP connections configured.</p>
                     )}
                   </div>
+
+                  {PRECONFIGURED_MCPS.filter((p) => !mcps.some((m) => m.id === p.id || m.name.toLowerCase() === p.name.toLowerCase())).length > 0 && (
+                    <div className="pt-2 border-t border-white/5">
+                      <div className="text-[10px] uppercase font-mono tracking-wider text-white/40 mb-2">Available MCP Integrations</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {PRECONFIGURED_MCPS.filter((p) => !mcps.some((m) => m.id === p.id || m.name.toLowerCase() === p.name.toLowerCase())).map((p) => (
+                          <div key={p.id} className="p-2 rounded-lg bg-white/[0.02] border border-white/10 flex flex-col justify-between gap-1.5">
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <strong className="text-xs text-white/90 block">{p.name}</strong>
+                                <span className="text-[8px] font-mono px-1 py-0.5 rounded bg-white/5 text-white/40">{p.authType}</span>
+                              </div>
+                              <p className="text-[11px] text-white/40 line-clamp-2 mt-0.5">{p.description}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleAddMcp(p)}
+                              className="text-xs text-emerald-300 hover:text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 rounded transition-colors self-start flex items-center gap-1 font-mono text-[10px] cursor-pointer"
+                            >
+                              <Plus size={11} /> Connect
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <form
                     onSubmit={(e) => {
                       e.preventDefault();
-                      if (newMcpName.trim()) {
-                        handleAddMcp(newMcpName);
+                      if (newMcpName.trim() && newMcpUrl.trim() && newMcpDesc.trim()) {
+                        handleAddMcp({
+                          id: `custom-${Date.now()}`,
+                          name: newMcpName.trim(),
+                          description: newMcpDesc.trim(),
+                          url: newMcpUrl.trim(),
+                          authType: newMcpAuthType,
+                        });
                         setNewMcpName("");
+                        setNewMcpDesc("");
+                        setNewMcpUrl("");
+                        setNewMcpAuthType("None");
                       }
                     }}
-                    className="flex gap-2 items-center"
+                    className="flex flex-col gap-2 pt-2 border-t border-white/5"
                   >
-                    <input
-                      type="text"
-                      placeholder="MCP connection name (e.g. postgres, git)…"
-                      value={newMcpName}
-                      onChange={(e) => setNewMcpName(e.target.value)}
-                      className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-emerald-500/50"
-                    />
-                    <button className="management-add-button" type="submit">
+                    <div className="text-[10px] uppercase font-mono tracking-wider text-white/40">Add Custom MCP</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Name * (e.g. Postgres DB)"
+                        value={newMcpName}
+                        onChange={(e) => setNewMcpName(e.target.value)}
+                        required
+                        className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-emerald-500/50"
+                      />
+                      <input
+                        type="text"
+                        placeholder="URL * (e.g. mcp://db.internal:8000)"
+                        value={newMcpUrl}
+                        onChange={(e) => setNewMcpUrl(e.target.value)}
+                        required
+                        className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-emerald-500/50"
+                      />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Description * (e.g. Database schema & query tool)"
+                        value={newMcpDesc}
+                        onChange={(e) => setNewMcpDesc(e.target.value)}
+                        required
+                        className="col-span-2 bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-emerald-500/50"
+                      />
+                      <select
+                        value={newMcpAuthType}
+                        onChange={(e) => setNewMcpAuthType(e.target.value as "None" | "API Key" | "OAuth")}
+                        className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50"
+                      >
+                        <option value="None" className="bg-neutral-900 text-white">None</option>
+                        <option value="API Key" className="bg-neutral-900 text-white">API Key</option>
+                        <option value="OAuth" className="bg-neutral-900 text-white">OAuth</option>
+                      </select>
+                    </div>
+                    <button className="management-add-button self-end mt-1" type="submit">
                       <Cable size={15} />Add MCP connection
                     </button>
                   </form>
@@ -1026,26 +1177,27 @@ export default function Home() {
                     </div>
                     <Sparkles size={18} />
                   </div>
+
                   <div className="skill-management-list">
                     {skills.map((skill) => (
-                      <div className="skill-management-row" key={skill}>
-                        <div>
-                          <strong>{skill.charAt(0).toUpperCase() + skill.slice(1)}</strong>
-                          <span>Autonomous capability</span>
+                      <div className="skill-management-row" key={skill.id || skill.name}>
+                        <div className="flex-1 min-w-0">
+                          <strong>{skill.name}</strong>
+                          <span className="truncate block text-white/50">{skill.description}</span>
                         </div>
-                        <em>READY</em>
-                        <div className="flex items-center gap-1.5">
+                        <em className="shrink-0">READY</em>
+                        <div className="flex items-center gap-1.5 shrink-0">
                           <button
                             type="button"
-                            className={activeAgentSkillId === skill ? "is-selected" : ""}
-                            onClick={() => setActiveAgentSkillId(skill)}
+                            className={activeAgentSkillId === skill.id || activeAgentSkillId === skill.name ? "is-selected" : ""}
+                            onClick={() => setActiveAgentSkillId(skill.id)}
                           >
-                            {activeAgentSkillId === skill ? "Active" : "Set active"}
+                            {activeAgentSkillId === skill.id || activeAgentSkillId === skill.name ? "Active" : "Set active"}
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleRemoveSkill(skill)}
-                            title={`Remove ${skill}`}
+                            onClick={() => handleRemoveSkill(skill.id || skill.name)}
+                            title={`Remove ${skill.name}`}
                           >
                             <Trash2 size={13} />
                           </button>
@@ -1056,24 +1208,65 @@ export default function Home() {
                       <p className="text-xs text-white/50 py-2">No skills configured.</p>
                     )}
                   </div>
+
+                  {PRECONFIGURED_SKILLS.filter((p) => !skills.some((s) => s.id === p.id || s.name.toLowerCase() === p.name.toLowerCase())).length > 0 && (
+                    <div className="pt-2 border-t border-white/5">
+                      <div className="text-[10px] uppercase font-mono tracking-wider text-white/40 mb-2">Available SRE Capabilities</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {PRECONFIGURED_SKILLS.filter((p) => !skills.some((s) => s.id === p.id || s.name.toLowerCase() === p.name.toLowerCase())).map((p) => (
+                          <div key={p.id} className="p-2 rounded-lg bg-white/[0.02] border border-white/10 flex flex-col justify-between gap-1.5">
+                            <div>
+                              <strong className="text-xs text-white/90 block">{p.name}</strong>
+                              <p className="text-[11px] text-white/40 line-clamp-2">{p.description}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleAddSkill(p)}
+                              className="text-xs text-emerald-300 hover:text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 rounded transition-colors self-start flex items-center gap-1 font-mono text-[10px] cursor-pointer"
+                            >
+                              <Plus size={11} /> Add capability
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <form
                     onSubmit={(e) => {
                       e.preventDefault();
-                      if (newSkillName.trim()) {
-                        handleAddSkill(newSkillName);
+                      if (newSkillName.trim() && newSkillDesc.trim()) {
+                        handleAddSkill({
+                          id: `custom-${Date.now()}`,
+                          name: newSkillName.trim(),
+                          description: newSkillDesc.trim(),
+                        });
                         setNewSkillName("");
+                        setNewSkillDesc("");
                       }
                     }}
-                    className="flex gap-2 items-center"
+                    className="flex flex-col gap-2 pt-2 border-t border-white/5"
                   >
-                    <input
-                      type="text"
-                      placeholder="Skill name (e.g. diagnostic, remediation)…"
-                      value={newSkillName}
-                      onChange={(e) => setNewSkillName(e.target.value)}
-                      className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-emerald-500/50"
-                    />
-                    <button className="management-add-button" type="submit">
+                    <div className="text-[10px] uppercase font-mono tracking-wider text-white/40">Add Custom Skill</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Skill Name * (e.g. Memory Profiler)"
+                        value={newSkillName}
+                        onChange={(e) => setNewSkillName(e.target.value)}
+                        required
+                        className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-emerald-500/50"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Skill Description * (e.g. Analyzes heap & leaks)"
+                        value={newSkillDesc}
+                        onChange={(e) => setNewSkillDesc(e.target.value)}
+                        required
+                        className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-emerald-500/50"
+                      />
+                    </div>
+                    <button className="management-add-button self-end mt-1" type="submit">
                       <Sparkles size={15} />Add Skill
                     </button>
                   </form>
