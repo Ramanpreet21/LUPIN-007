@@ -260,20 +260,7 @@ export async function startDemoStack(
   };
 }
 
-export const DEMO_NODE_IDS = [
-  "node-server",
-  "node-client1",
-  "node-client2",
-  "node-client3",
-  "node-attacker",
-];
-
-export async function stopDemoStack(
-  broadcastOrWorkspace?: ((event: { type: string; payload: unknown }) => void) | string,
-  workspaceParam = process.cwd()
-): Promise<{ ok: boolean; error?: string }> {
-  const broadcast = typeof broadcastOrWorkspace === "function" ? broadcastOrWorkspace : undefined;
-  const workspaceRoot = typeof broadcastOrWorkspace === "string" ? broadcastOrWorkspace : workspaceParam;
+export async function stopDemoStack(workspaceRoot = process.cwd()): Promise<{ ok: boolean; error?: string }> {
   const engine = await detectComposeEngine();
   if (engine.type === "none" || !engine.binary) {
     return {
@@ -287,36 +274,6 @@ export async function stopDemoStack(
   try {
     const args = [...engine.composeArgs, "-f", composeFile, "down"];
     await execFileAsync(engine.binary, args, { timeout: 30000 });
-
-    try {
-      const db = getDb();
-      const deleteHost = db.prepare("DELETE FROM fleet_hosts WHERE id = ?");
-      for (const id of DEMO_NODE_IDS) {
-        deleteHost.run(id);
-      }
-
-      const upsertSetting = db.prepare(`
-        INSERT INTO settings (key, value) VALUES (@key, @value)
-        ON CONFLICT(key) DO UPDATE SET value = @value
-      `);
-      upsertSetting.run({ key: "sandbox_provider", value: "isolated-local" });
-      upsertSetting.run({ key: "launch_mode", value: "LIVE_HOST" });
-
-      const remainingHosts = (db.prepare("SELECT count(*) as count FROM fleet_hosts").get() as { count: number })?.count ?? 0;
-
-      broadcast?.({
-        type: "fleet_updated",
-        payload: { count: remainingHosts },
-      });
-
-      broadcast?.({
-        type: "sandbox_provider_changed",
-        payload: { provider: "isolated-local" },
-      });
-    } catch (err) {
-      console.error("Failed to clean up demo database records:", err);
-    }
-
     return { ok: true };
   } catch (err) {
     return {
