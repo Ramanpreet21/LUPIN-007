@@ -418,23 +418,34 @@ export default function Home() {
 
   const handleSaveProviderKey = async () => {
     if (!selectedProvider) return;
-    const newConfigured = Array.from(new Set([...configuredProviders, selectedProvider]));
-    setConfiguredProviders(newConfigured);
     try {
       const payload: Record<string, unknown> = {
         model_provider: selectedProvider,
-        configured_providers: newConfigured,
       };
       if (providerApiKey.trim()) {
         payload.model_api_key = providerApiKey.trim();
         payload[`${selectedProvider.replace("-", "_")}_api_key`] = providerApiKey.trim();
       }
-      await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
+      if (providerBaseUrl.trim()) {
+        payload.model_base_url = providerBaseUrl.trim();
+      }
+
+      const res = await fetch(`${CONTROL_PLANE_ORIGIN}/api/settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      setSettingsNotice(`API key configured for ${providers.find((p) => p.id === selectedProvider)?.name || selectedProvider}. Models unlocked!`);
+
+      if (!res.ok) {
+        const errData = (await res.json().catch(() => ({}))) as { error?: string; details?: string[] };
+        const detailMsg = Array.isArray(errData.details) && errData.details.length > 0 ? errData.details[0] : (errData.error || "Failed to configure provider on TrueForge");
+        setSettingsNotice(`Failed to configure provider: ${detailMsg}`);
+        return;
+      }
+
+      const newConfigured = Array.from(new Set([...configuredProviders, selectedProvider]));
+      setConfiguredProviders(newConfigured);
+      setSettingsNotice(`API key configured for ${providers.find((p) => p.id === selectedProvider)?.name || selectedProvider}. Models unlocked on TrueForge!`);
       // Refresh models
       void fetch(`${CONTROL_PLANE_ORIGIN}/api/models`)
         .then((r) => r.json())

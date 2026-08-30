@@ -70,4 +70,79 @@ describe("settings routes", () => {
     assert.equal(body.status, "ok");
     assert.deepEqual(body.updated, ["operator_name"]);
   });
+
+  it("PUT /api/settings syncs model provider with TrueForge client", async () => {
+    let syncedManifest: unknown = null;
+    const mockTf = {
+      client: {
+        settings: {
+          modelProviders: {
+            createOrUpdate: async (req: { manifest: unknown }) => {
+              syncedManifest = req.manifest;
+              return { data: { name: "google-gemini" } };
+            },
+          },
+        },
+      } as any,
+      status: { state: "ready", baseUrlConfigured: true, authConfigured: true } as const,
+    };
+
+    const tfApp = express();
+    tfApp.use(express.json());
+    tfApp.use(createSettingsRouter({ getTf: () => mockTf }));
+    const tfServer = createServer(tfApp);
+    await new Promise<void>((resolve) => tfServer.listen(0, "127.0.0.1", resolve));
+    const tfAddr = tfServer.address() as { port: number };
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${tfAddr.port}/api/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ google_gemini_api_key: "ai_test_gemini_key_123" }),
+      });
+      assert.equal(res.status, 200);
+      assert.ok(syncedManifest);
+      assert.equal((syncedManifest as { type: string }).type, "google-gemini");
+      assert.equal((syncedManifest as { auth: { apiKey: string } }).auth.apiKey, "ai_test_gemini_key_123");
+    } finally {
+      tfServer.close();
+    }
+  });
+
+  it("PUT /api/settings returns 400 when TrueForge rejects model provider credentials", async () => {
+    const mockTf = {
+      client: {
+        settings: {
+          modelProviders: {
+            createOrUpdate: async () => {
+              throw new Error("Invalid API key for Anthropic");
+            },
+          },
+        },
+      } as any,
+      status: { state: "ready", baseUrlConfigured: true, authConfigured: true } as const,
+    };
+
+    const tfApp = express();
+    tfApp.use(express.json());
+    tfApp.use(createSettingsRouter({ getTf: () => mockTf }));
+    const tfServer = createServer(tfApp);
+    await new Promise<void>((resolve) => tfServer.listen(0, "127.0.0.1", resolve));
+    const tfAddr = tfServer.address() as { port: number };
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${tfAddr.port}/api/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ anthropic_api_key: "bad-anthropic-key" }),
+      });
+      assert.equal(res.status, 400);
+      const body = (await res.json()) as { error: string; details: string[] };
+      assert.equal(body.error, "trueforge_model_provider_error");
+      assert.equal(body.details[0], "Invalid API key for Anthropic");
+    } finally {
+      tfServer.close();
+    }
+  });
 });
+
