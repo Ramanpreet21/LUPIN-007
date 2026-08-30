@@ -7,9 +7,11 @@ export interface UseHealthReturn {
   error: string | null;
 }
 
-/** Control-plane origin (mirrors the same env override in useControlPlane). */
 const CONTROL_PLANE_ORIGIN =
-  import.meta.env.VITE_CONTROL_PLANE_ORIGIN ?? "http://localhost:3000";
+  import.meta.env.VITE_CONTROL_PLANE_ORIGIN ??
+  (typeof window !== "undefined" && (window.location.port === "3000" || !window.location.port)
+    ? ""
+    : "http://localhost:3001");
 
 /**
  * Polls GET /health every `pollMs` (default 10s) and exposes the latest payload.
@@ -24,7 +26,7 @@ export function useHealth(pollMs = 10_000): UseHealthReturn {
     let cancelled = false;
     const load = async () => {
       try {
-        const response = await fetch(`${CONTROL_PLANE_ORIGIN}/health`);
+        const response = await fetch(`${CONTROL_PLANE_ORIGIN}/api/health-summary`);
         if (!response.ok) throw new Error(`health check failed (HTTP ${response.status})`);
         const body = (await response.json()) as ControlPlaneHealth;
         if (cancelled) return;

@@ -17,6 +17,65 @@ export interface SandboxProviderClient {
   }): Promise<unknown>;
 }
 
+/** Shipped sandbox catalog provider presets from @truefoundry/trueforge. */
+export const TRUEFORGE_SANDBOX_CATALOG = [
+  {
+    type: "daytona",
+    name: "Daytona Cloud (TrueForge Native)",
+    description: "Cloud-hosted isolated execution microVMs with fast snapshots and auto-stop.",
+    defaultAutoStopMinutes: 30,
+    defaultAutoArchiveMinutes: 60,
+    defaultAutoDeleteMinutes: 1440,
+    defaultExecTimeoutMs: 300000,
+    requiresApiKey: true,
+    requiresServerUrl: false,
+  },
+  {
+    type: "daytona-custom",
+    name: "Daytona Dedicated / Self-Hosted",
+    description: "Private Daytona server deployment for on-prem or VPC isolated sandbox execution.",
+    defaultAutoStopMinutes: 30,
+    defaultAutoArchiveMinutes: 60,
+    defaultAutoDeleteMinutes: 1440,
+    defaultExecTimeoutMs: 300000,
+    requiresApiKey: true,
+    requiresServerUrl: true,
+  },
+  {
+    type: "podman",
+    name: "Local Podman Container",
+    description: "Rootless local Podman container runtime for sandboxed CLI execution on the host.",
+    defaultAutoStopMinutes: 0,
+    defaultAutoArchiveMinutes: 0,
+    defaultAutoDeleteMinutes: 0,
+    defaultExecTimeoutMs: 60000,
+    requiresApiKey: false,
+    requiresServerUrl: false,
+  },
+  {
+    type: "docker",
+    name: "Local Docker Container",
+    description: "Local Docker socket container runtime for isolated testing and remediation.",
+    defaultAutoStopMinutes: 0,
+    defaultAutoArchiveMinutes: 0,
+    defaultAutoDeleteMinutes: 0,
+    defaultExecTimeoutMs: 60000,
+    requiresApiKey: false,
+    requiresServerUrl: false,
+  },
+  {
+    type: "isolated-local",
+    name: "Simulated Isolated Host Process",
+    description: "Protected subprocess isolation on the host system.",
+    defaultAutoStopMinutes: 0,
+    defaultAutoArchiveMinutes: 0,
+    defaultAutoDeleteMinutes: 0,
+    defaultExecTimeoutMs: 30000,
+    requiresApiKey: false,
+    requiresServerUrl: false,
+  },
+] as const;
+
 /**
  * Daytona presets hardcoded by the control plane (PR #4 4a). The operator only
  * supplies the API key; the control plane owns the lifecycle tuning.
@@ -75,9 +134,17 @@ export async function getSandboxSettings(
 export async function updateSandboxSettings(
   client: SandboxProviderClient,
   apiKey: string,
+  serverUrl?: string,
 ): Promise<SandboxSettings> {
+  const manifest: Record<string, unknown> = {
+    ...DAYTONA_PRESETS,
+    auth: { apiKey },
+  };
+  if (serverUrl) {
+    manifest.serverUrl = serverUrl;
+  }
   await client.createOrUpdate({
-    manifest: { ...DAYTONA_PRESETS, auth: { apiKey } },
+    manifest: manifest as unknown as TrueForgeApi.SandboxProviderManifest,
   });
   return getSandboxSettings(client);
 }

@@ -2,13 +2,17 @@ import { Box, CheckCircle2, Cpu, HardDrive, LockKeyhole, Network, Play } from "l
 import { mergeSandboxStatus, useSandbox } from "@/hooks/useSandbox";
 import type { SandboxTwinData, WorkspaceViewProps } from "@/types/workspace-cards";
 
+export interface SandboxTwinCardProps extends WorkspaceViewProps<SandboxTwinData> {
+  sandboxId?: string | null;
+}
+
 export function SandboxTwinCard({
   context,
   data,
   sandboxId = null,
   onAction,
   className = "",
-}: WorkspaceViewProps<SandboxTwinData> & { sandboxId?: string | null }) {
+}: SandboxTwinCardProps) {
   // 5f: poll the sandbox-status REST proxy (TrueForge-backed when reachable) and
   // overlay live metrics on the fixture; the fixture remains the fallback.
   const live = useSandbox(sandboxId);

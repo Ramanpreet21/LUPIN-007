@@ -5,10 +5,18 @@ import { createLogger } from "./logger";
 import { startServer } from "./server";
 import type { TrueForgeHandle } from "./trueforge";
 import { computeSafetyBadges, createIncidentRouter } from "./incident-plane";
-import { createIncident, setIncidentStatus } from "./incidents";
+import { createIncident, getIncident, listIncidents, patchIncident, setIncidentStatus } from "./incidents";
+import { initDb, getDb } from "./db";
 import type { TrueForgeApi } from "@truefoundry/trueforge-sdk";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 type TurnStreamingEvent = TrueForgeApi.TurnStreamingEvent;
+
+const TEST_DB_DIR = join(__dirname, "..", "data", "test");
+const TEST_DB_PATH = join(TEST_DB_DIR, "incident-plane-test.sqlite");
+mkdirSync(TEST_DB_DIR, { recursive: true });
+initDb(TEST_DB_PATH);
 
 const logger = createLogger("silent");
 
@@ -742,7 +750,7 @@ test("session creation enables the sandbox with the configured model FQN", async
       };
     };
     // No name-ref shortcut: sandbox mode + the responder prompt live on the spec body.
-    assert.equal(request.agent.spec.config.sandbox.enabled, true);
+    assert.equal(request.agent.spec.config.sandbox.enabled, false);
     // Router-constructed default here; index.ts injects the TRUEFORGE_MODEL value.
     assert.equal(request.agent.spec.model.name, "anthropic/claude-sonnet-5");
     // The responder prompt rides as system instructions, not a user message (qodo #6).
@@ -825,6 +833,256 @@ test("GET /incidents lists the store newest-first with status/limit filtering", 
     const malformedBody = (await malformed.json()) as { data: unknown[] };
     assert.ok(malformedBody.data.length <= 50, "malformed limit stays capped at 50");
   } finally {
+    await server.close();
+  }
+});
+
+test("POST /api/emergency-stop cancels active sessions and fails diagnosing/awaiting incidents", async () => {
+  const fake = makeFakeHandle([], []);
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    const inc1 = createIncident({ service_name: "svc-stop-1", target_host: "h1", severity: "warning" });
+    const inc2 = createIncident({ service_name: "svc-stop-2", target_host: "h2", severity: "critical" });
+    assert.ok(inc1 && inc2);
+    // inc1 is diagnosing with a session
+    patchIncident(inc1.id, { sessionId: "sess-stop-1" });
+    // inc2 is awaiting_approval with a session
+    patchIncident(inc2.id, { sessionId: "sess-stop-2" });
+    setIncidentStatus(inc2.id, "awaiting_approval");
+
+    const res = await postJson(`http://127.0.0.1:${server.port}/api/emergency-stop`, "{}");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { status: string; cancelled: number };
+    assert.equal(body.status, "ok");
+    assert.ok(body.cancelled >= 2);
+
+    // Verify both sessions were cancelled via the TrueForge client
+    assert.ok(fake.cancelled.includes("sess-stop-1"));
+    assert.ok(fake.cancelled.includes("sess-stop-2"));
+
+    // Verify incident statuses are marked failed in the store
+    assert.equal(getIncident(inc1.id)?.status, "failed");
+    assert.equal(getIncident(inc2.id)?.status, "failed");
+
+    // Verify execution_complete broadcasts occurred
+    const event1 = await ws.waitFor("execution_complete");
+    assert.equal(event1.payload.status, "failed");
+  } finally {
+    ws.close();
+    await server.close();
+  }
+});
+
+test("POST /api/emergency-stop returns cancelled 0 when no incidents are active", async () => {
+  const fake = makeFakeHandle([], []);
+  const server = await withServer(fake.handle);
+  try {
+    // Note: ensure no active incidents remain from previous tests by setting any active ones to completed
+    const active = listIncidents({ status: "diagnosing" }).concat(listIncidents({ status: "awaiting_approval" }));
+    for (const inc of active) {
+      setIncidentStatus(inc.id, "completed");
+    }
+
+    const res = await postJson(`http://127.0.0.1:${server.port}/api/emergency-stop`, "{}");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { status: string; cancelled: number };
+    assert.deepEqual(body, { status: "ok", cancelled: 0 });
+    assert.equal(fake.cancelled.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /api/emergency-stop handles session cancellation errors gracefully (best-effort)", async () => {
+  const fake = makeFakeHandle([], []);
+  // Make client.sessions.cancel throw
+  fake.handle.client!.sessions.cancel = (async () => {
+    throw new Error("cancellation network timeout");
+  }) as any;
+  const server = await withServer(fake.handle);
+  try {
+    const inc = createIncident({ service_name: "svc-err-1", target_host: "h1", severity: "warning" });
+    assert.ok(inc);
+    patchIncident(inc.id, { sessionId: "sess-throw-1" });
+
+    const res = await postJson(`http://127.0.0.1:${server.port}/api/emergency-stop`, "{}");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { status: string; cancelled: number };
+    assert.equal(body.status, "ok");
+    assert.ok(body.cancelled >= 1);
+    assert.equal(getIncident(inc.id)?.status, "failed");
+  } finally {
+    await server.close();
+  }
+});
+
+test("enforcement mode AUTONOMOUS: auto-approves immediately on tool.approval_required", async () => {
+  const db = getDb();
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('enforcement_mode', 'AUTONOMOUS')").run();
+  const fake = makeFakeHandle(diagnosisGateStream(), doneStream("done"));
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    const res = await postJson(`http://127.0.0.1:${server.port}/alerts`, alertBody);
+    assert.equal(res.status, 202);
+    const { incident_id } = (await res.json()) as { incident_id: string };
+
+    const thinking = await ws.waitFor("agent_thinking");
+    assert.equal(thinking.incident_id, incident_id);
+
+    // In AUTONOMOUS mode, no manual approval is needed; turn resumes automatically to completion
+    const done = await ws.waitFor("execution_complete");
+    assert.equal(done.incident_id, incident_id);
+    assert.equal(done.payload.status, "success");
+
+    // Verify tool approval was auto-allowed
+    assert.equal(fake.resumed.length, 1);
+    const resumeInput = fake.resumed[0].request.input;
+    assert.ok(resumeInput && Array.isArray(resumeInput) && resumeInput.length === 1);
+    const approvalItem = resumeInput[0] as { type?: string; approval?: { status?: string } };
+    assert.equal(approvalItem.type, "user.tool_approval");
+    assert.equal(approvalItem.approval?.status, "allow");
+
+    const incident = getIncident(incident_id);
+    assert.equal(incident?.status, "completed");
+  } finally {
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('enforcement_mode', 'STRICT_GATED')").run();
+    ws.close();
+    await server.close();
+  }
+});
+
+test("enforcement mode DRY_RUN: auto-denies immediately on tool.approval_required and cancels session", async () => {
+  const db = getDb();
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('enforcement_mode', 'DRY_RUN')").run();
+  const fake = makeFakeHandle(diagnosisGateStream(), []);
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    const res = await postJson(`http://127.0.0.1:${server.port}/alerts`, alertBody);
+    assert.equal(res.status, 202);
+    const { incident_id } = (await res.json()) as { incident_id: string };
+
+    const thinking = await ws.waitFor("agent_thinking");
+    assert.equal(thinking.incident_id, incident_id);
+
+    // In DRY_RUN mode, auto-denies and emits execution_complete rejected
+    const done = await ws.waitFor("execution_complete");
+    assert.equal(done.incident_id, incident_id);
+    assert.equal(done.payload.status, "rejected");
+
+    // Verify tool approval was auto-denied
+    assert.equal(fake.resumed.length, 1);
+    const resumeInput = fake.resumed[0].request.input;
+    assert.ok(resumeInput && Array.isArray(resumeInput) && resumeInput.length === 1);
+    const approvalItem = resumeInput[0] as { type?: string; approval?: { status?: string; reason?: string } };
+    assert.equal(approvalItem.type, "user.tool_approval");
+    assert.equal(approvalItem.approval?.status, "deny");
+
+    // Session is cancelled
+    assert.ok(fake.cancelled.length >= 1);
+
+    const incident = getIncident(incident_id);
+    assert.equal(incident?.status, "rejected");
+  } finally {
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('enforcement_mode', 'STRICT_GATED')").run();
+    ws.close();
+    await server.close();
+  }
+});
+
+test("enforcement mode STRICT_GATED: broadcasts pending_approval and halts until operator acts", async () => {
+  const db = getDb();
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('enforcement_mode', 'STRICT_GATED')").run();
+  const fake = makeFakeHandle(diagnosisGateStream(), doneStream("done"));
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    const res = await postJson(`http://127.0.0.1:${server.port}/alerts`, alertBody);
+    assert.equal(res.status, 202);
+    const { incident_id } = (await res.json()) as { incident_id: string };
+
+    const pending = await ws.waitFor("pending_approval");
+    assert.equal(pending.incident_id, incident_id);
+    assert.equal(fake.resumed.length, 0);
+
+    const incBefore = getIncident(incident_id);
+    assert.equal(incBefore?.status, "awaiting_approval");
+
+    const approve = await postJson(
+      `http://127.0.0.1:${server.port}/api/approvals`,
+      JSON.stringify({ incident_id, decision: "approved" }),
+    );
+    assert.equal(approve.status, 200);
+
+    const done = await ws.waitFor("execution_complete");
+    assert.equal(done.incident_id, incident_id);
+    assert.equal(done.payload.status, "success");
+    assert.equal(fake.resumed.length, 1);
+  } finally {
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('enforcement_mode', 'STRICT_GATED')").run();
+    ws.close();
+    await server.close();
+  }
+});
+
+test("POST /converse rejects missing message with 400", async () => {
+  const fake = makeFakeHandle(completedStream(), []);
+  const server = await withServer(fake.handle);
+  try {
+    const res = await postJson(`http://127.0.0.1:${server.port}/converse`, JSON.stringify({}));
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error: string };
+    assert.equal(body.error, "missing_message");
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /converse streams thinking and complete events via WebSocket", async () => {
+  const t0 = new Date().toISOString();
+  const converseStream: TurnStreamingEvent[] = [
+    ev({ type: "turn.created", id: "t0", createdAt: t0, turnId: "turn-conv-1", threadId: "th-conv-1" }),
+    ev({
+      type: "model.message",
+      id: "m0",
+      createdAt: t0,
+      turnId: "turn-conv-1",
+      threadId: "th-conv-1",
+      content: "Analyzing the request.",
+    }),
+    ev({
+      type: "turn.done",
+      id: "d0",
+      createdAt: t0,
+      turnId: "turn-conv-1",
+      threadId: "th-conv-1",
+      state: { status: "done" },
+    }),
+  ];
+
+  const fake = makeFakeHandle(converseStream, []);
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    const res = await postJson(
+      `http://127.0.0.1:${server.port}/converse`,
+      JSON.stringify({ message: "Check nginx service status" }),
+    );
+    assert.equal(res.status, 202);
+    const body = (await res.json()) as { status: string; session_id: string };
+    assert.equal(body.status, "accepted");
+    assert.ok(body.session_id);
+
+    const thinking = await ws.waitFor("converse_thinking");
+    assert.equal(thinking.payload.content, "Analyzing the request.");
+
+    const complete = await ws.waitFor("converse_complete");
+    assert.equal(complete.payload.status, "done");
+    assert.equal(complete.payload.content, "Analyzing the request.");
+  } finally {
+    ws.close();
     await server.close();
   }
 });

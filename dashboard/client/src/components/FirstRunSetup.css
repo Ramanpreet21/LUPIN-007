@@ -40,3 +40,7 @@
 /* The launch-path section remains a glass plane, but has no framing border lines. */
 .setup-step-panel { padding-right: 42px; border: 0; box-shadow: none; }
 @media (max-width: 760px) { .setup-step-panel { padding-right: 0; } }
+
+.setup-field select { width: 100%; height: 42px; border: 1px solid rgba(255,255,255,.13); border-radius: 10px; padding: 0 11px; outline: 0; background: rgba(2,8,9,.6); color: #f0fbf5; font-size: 12px; transition: border-color 160ms ease, box-shadow 160ms ease; }
+.setup-field select option { background: #080c0e; color: #f0fbf5; }
+
