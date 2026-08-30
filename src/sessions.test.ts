@@ -209,4 +209,89 @@ describe("sessions routes", () => {
       incidentServer.close();
     }
   });
+
+  it("POST /api/sessions creates a session and broadcasts session_created", async () => {
+    const broadcasts: unknown[] = [];
+    const fakeHandle: TrueForgeHandle = {
+      status: { state: "ready", baseUrlConfigured: true, authConfigured: false },
+      client: {
+        sessions: {
+          create: async () => ({ data: { id: "sess-created-1" } }),
+          cancel: async () => {},
+        },
+      } as any,
+    };
+
+    const app = express();
+    app.use(express.json());
+    app.use(createSessionsRouter({
+      getTf: () => fakeHandle,
+      broadcast: (msg) => broadcasts.push(msg),
+    }));
+
+    const s = createServer(app);
+    await new Promise<void>((resolve) => s.listen(0, "127.0.0.1", resolve));
+    const addr = s.address() as { port: number };
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${addr.port}/api/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ summary: "Manual test session" }),
+      });
+      assert.equal(res.status, 201);
+      const body = (await res.json()) as { id: string; summary: string };
+      assert.equal(body.id, "sess-created-1");
+      assert.equal(body.summary, "Manual test session");
+
+      const sessionInDb = getDb().prepare("SELECT * FROM sessions WHERE id = ?").get("sess-created-1") as { summary: string };
+      assert.ok(sessionInDb);
+      assert.equal(sessionInDb.summary, "Manual test session");
+
+      const broadcast = broadcasts.find((b: any) => b.type === "session_created");
+      assert.ok(broadcast);
+    } finally {
+      s.close();
+    }
+  });
+
+  it("DELETE /api/sessions/:id cancels and removes session", async () => {
+    let cancelledSessionId: string | null = null;
+    const fakeHandle: TrueForgeHandle = {
+      status: { state: "ready", baseUrlConfigured: true, authConfigured: false },
+      client: {
+        sessions: {
+          cancel: async (id: string) => { cancelledSessionId = id; },
+        },
+      } as any,
+    };
+
+    getDb().prepare(
+      `INSERT INTO sessions (id, thread_id, incident_id, summary, created_at)
+       VALUES ('sess-to-del', null, null, 'Delete test', '2026-08-30T12:00:00.000Z')`
+    ).run();
+
+    const app = express();
+    app.use(express.json());
+    app.use(createSessionsRouter({
+      getTf: () => fakeHandle,
+    }));
+
+    const s = createServer(app);
+    await new Promise<void>((resolve) => s.listen(0, "127.0.0.1", resolve));
+    const addr = s.address() as { port: number };
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${addr.port}/api/sessions/sess-to-del`, {
+        method: "DELETE",
+      });
+      assert.equal(res.status, 200);
+      assert.equal(cancelledSessionId, "sess-to-del");
+
+      const sessionInDb = getDb().prepare("SELECT * FROM sessions WHERE id = ?").get("sess-to-del");
+      assert.equal(sessionInDb, undefined);
+    } finally {
+      s.close();
+    }
+  });
 });
