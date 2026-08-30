@@ -874,12 +874,39 @@ test("POST /api/emergency-stop cancels active sessions and fails diagnosing/awai
   }
 });
 
+test("POST /api/emergency-stop cancels approved incidents in flight", async () => {
+  const fake = makeFakeHandle([], []);
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    const inc = createIncident({ service_name: "svc-appr-stop", target_host: "h-appr", severity: "critical" });
+    assert.ok(inc);
+    patchIncident(inc.id, { sessionId: "sess-appr-stop-1" });
+    setIncidentStatus(inc.id, "approved");
+
+    const res = await postJson(`http://127.0.0.1:${server.port}/api/emergency-stop`, "{}");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { status: string; cancelled: number };
+    assert.equal(body.status, "ok");
+    assert.ok(body.cancelled >= 1);
+
+    assert.ok(fake.cancelled.includes("sess-appr-stop-1"));
+    assert.equal(getIncident(inc.id)?.status, "failed");
+
+    const event = await ws.waitFor("execution_complete");
+    assert.equal(event.payload.status, "failed");
+  } finally {
+    ws.close();
+    await server.close();
+  }
+});
+
 test("POST /api/emergency-stop returns cancelled 0 when no incidents are active", async () => {
   const fake = makeFakeHandle([], []);
   const server = await withServer(fake.handle);
   try {
     // Note: ensure no active incidents remain from previous tests by setting any active ones to completed
-    const active = listIncidents({ status: "diagnosing" }).concat(listIncidents({ status: "awaiting_approval" }));
+    const active = listIncidents().filter((i) => !["completed", "failed", "rejected"].includes(i.status));
     for (const inc of active) {
       setIncidentStatus(inc.id, "completed");
     }
@@ -1036,6 +1063,54 @@ test("POST /converse rejects missing message with 400", async () => {
     const body = (await res.json()) as { error: string };
     assert.equal(body.error, "missing_message");
   } finally {
+    await server.close();
+  }
+});
+
+test("POST /converse rejects unknown session_id with 404", async () => {
+  const fake = makeFakeHandle(completedStream(), []);
+  const server = await withServer(fake.handle);
+  try {
+    const res = await postJson(
+      `http://127.0.0.1:${server.port}/converse`,
+      JSON.stringify({ message: "Hello", session_id: "non-existent-session-123" }),
+    );
+    assert.equal(res.status, 404);
+    const body = (await res.json()) as { error: string };
+    assert.equal(body.error, "session_not_found");
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /converse streams failure status on turn.done with failure", async () => {
+  const t0 = new Date().toISOString();
+  const failedStream: TurnStreamingEvent[] = [
+    ev({ type: "turn.created", id: "t0", createdAt: t0, turnId: "turn-conv-err", threadId: "th-conv-err" }),
+    ev({
+      type: "turn.done",
+      id: "d0",
+      createdAt: t0,
+      turnId: "turn-conv-err",
+      threadId: "th-conv-err",
+      state: { status: "failed" },
+    }),
+  ];
+
+  const fake = makeFakeHandle(failedStream, []);
+  const server = await withServer(fake.handle);
+  const ws = await connectWs(server.port);
+  try {
+    const res = await postJson(
+      `http://127.0.0.1:${server.port}/converse`,
+      JSON.stringify({ message: "Fail this request" }),
+    );
+    assert.equal(res.status, 202);
+
+    const complete = await ws.waitFor("converse_complete");
+    assert.equal(complete.payload.status, "failed");
+  } finally {
+    ws.close();
     await server.close();
   }
 });

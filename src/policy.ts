@@ -138,13 +138,57 @@ export function validateSafeRegex(pattern: string): void {
   new RegExp(trimmed);
 }
 
+import { getDb } from "./db";
+
+function rowToRule(row: any): PolicyRule {
+  let forbiddenFlags: string[] | undefined;
+  if (row.forbidden_flags) {
+    try {
+      forbiddenFlags = JSON.parse(row.forbidden_flags);
+    } catch {
+      forbiddenFlags = undefined;
+    }
+  }
+  return {
+    id: row.id,
+    name: row.name,
+    regex: row.regex,
+    category: row.category as PolicyCategory,
+    severity: row.severity as PolicySeverity,
+    enabled: Boolean(row.enabled),
+    reasonDescription: row.reason_description ?? undefined,
+    matchExpression: row.match_expression ?? undefined,
+    binaryName: row.binary_name ?? undefined,
+    forbiddenFlags,
+  };
+}
+
 let rulesStore: Map<string, PolicyRule> = new Map(DEFAULT_RULES.map((r) => [r.id, { ...r }]));
 
 export function listPolicyRules(): PolicyRule[] {
+  try {
+    const db = getDb();
+    const rows = db.prepare("SELECT * FROM policy_rules ORDER BY created_at ASC").all();
+    if (rows && rows.length > 0) {
+      const rules = rows.map(rowToRule);
+      rulesStore = new Map(rules.map((r) => [r.id, r]));
+      return rules;
+    }
+  } catch { /* fallback to in-memory store */ }
   return Array.from(rulesStore.values());
 }
 
 export function getPolicyRule(id: string): PolicyRule | undefined {
+  try {
+    const db = getDb();
+    const row = db.prepare("SELECT * FROM policy_rules WHERE id = ?").get(id);
+    if (row) {
+      const rule = rowToRule(row);
+      rulesStore.set(rule.id, rule);
+      return rule;
+    }
+    return undefined;
+  } catch { /* fallback */ }
   return rulesStore.get(id);
 }
 
@@ -153,26 +197,114 @@ export function createPolicyRule(input: Omit<PolicyRule, "id">): PolicyRule {
   const id = `rule-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const rule: PolicyRule = { ...input, id };
   rulesStore.set(id, rule);
+
+  try {
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO policy_rules (id, name, regex, category, severity, enabled, reason_description, match_expression, binary_name, forbidden_flags, created_at)
+       VALUES (@id, @name, @regex, @category, @severity, @enabled, @reason_description, @match_expression, @binary_name, @forbidden_flags, @created_at)`
+    ).run({
+      id: rule.id,
+      name: rule.name,
+      regex: rule.regex,
+      category: rule.category,
+      severity: rule.severity,
+      enabled: rule.enabled ? 1 : 0,
+      reason_description: rule.reasonDescription ?? null,
+      match_expression: rule.matchExpression ?? null,
+      binary_name: rule.binaryName ?? null,
+      forbidden_flags: rule.forbiddenFlags ? JSON.stringify(rule.forbiddenFlags) : null,
+      created_at: new Date().toISOString(),
+    });
+  } catch { /* DB persistence best-effort if db uninitialized */ }
+
   return rule;
 }
 
 export function updatePolicyRule(id: string, patch: Partial<PolicyRule>): PolicyRule | undefined {
-  const existing = rulesStore.get(id);
+  let existing: PolicyRule | undefined;
+  try {
+    const db = getDb();
+    const row = db.prepare("SELECT * FROM policy_rules WHERE id = ?").get(id);
+    if (row) existing = rowToRule(row);
+  } catch { /* fallback */ }
+  if (!existing) existing = rulesStore.get(id);
   if (!existing) return undefined;
   if ("regex" in patch && patch.regex !== undefined) {
     validateSafeRegex(patch.regex);
   }
   const updated: PolicyRule = { ...existing, ...patch, id };
   rulesStore.set(id, updated);
+
+  try {
+    const db = getDb();
+    db.prepare(
+      `UPDATE policy_rules SET
+         name = @name,
+         regex = @regex,
+         category = @category,
+         severity = @severity,
+         enabled = @enabled,
+         reason_description = @reason_description,
+         match_expression = @match_expression,
+         binary_name = @binary_name,
+         forbidden_flags = @forbidden_flags
+       WHERE id = @id`
+    ).run({
+      id: updated.id,
+      name: updated.name,
+      regex: updated.regex,
+      category: updated.category,
+      severity: updated.severity,
+      enabled: updated.enabled ? 1 : 0,
+      reason_description: updated.reasonDescription ?? null,
+      match_expression: updated.matchExpression ?? null,
+      binary_name: updated.binaryName ?? null,
+      forbidden_flags: updated.forbiddenFlags ? JSON.stringify(updated.forbiddenFlags) : null,
+    });
+  } catch { /* fallback */ }
+
   return updated;
 }
 
 export function deletePolicyRule(id: string): boolean {
-  return rulesStore.delete(id);
+  let deletedFromDb = false;
+  try {
+    const db = getDb();
+    const result = db.prepare("DELETE FROM policy_rules WHERE id = ?").run(id);
+    deletedFromDb = result.changes > 0;
+  } catch { /* fallback */ }
+
+  const deletedFromMem = rulesStore.delete(id);
+  return deletedFromDb || deletedFromMem;
 }
 
 export function resetPolicyRules(): void {
   rulesStore = new Map(DEFAULT_RULES.map((r) => [r.id, { ...r }]));
+  try {
+    const db = getDb();
+    db.prepare("DELETE FROM policy_rules").run();
+    const insertRule = db.prepare(
+      `INSERT INTO policy_rules (id, name, regex, category, severity, enabled, reason_description, match_expression, binary_name, forbidden_flags, created_at)
+       VALUES (@id, @name, @regex, @category, @severity, @enabled, @reason_description, @match_expression, @binary_name, @forbidden_flags, @created_at)`
+    );
+    const now = new Date().toISOString();
+    for (const rule of DEFAULT_RULES) {
+      insertRule.run({
+        id: rule.id,
+        name: rule.name,
+        regex: rule.regex,
+        category: rule.category,
+        severity: rule.severity,
+        enabled: rule.enabled ? 1 : 0,
+        reason_description: rule.reasonDescription ?? null,
+        match_expression: rule.matchExpression ?? null,
+        binary_name: rule.binaryName ?? null,
+        forbidden_flags: rule.forbiddenFlags ? JSON.stringify(rule.forbiddenFlags) : null,
+        created_at: now,
+      });
+    }
+  } catch { /* fallback */ }
 }
 
 function normalizeLeadingBinary(stmt: string): string {

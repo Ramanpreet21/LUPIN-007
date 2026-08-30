@@ -34,7 +34,7 @@ beforeEach(() => {
   resetPolicyRules();
 });
 
-test("policy CRUD manages in-memory rule store", () => {
+test("policy CRUD manages rule store and persists to SQLite", () => {
   const initial = listPolicyRules();
   assert.ok(initial.length >= 5);
 
@@ -49,12 +49,25 @@ test("policy CRUD manages in-memory rule store", () => {
   assert.ok(custom.id.startsWith("rule-"));
   assert.equal(getPolicyRule(custom.id)?.name, "Block drop table");
 
-  updatePolicyRule(custom.id, { enabled: false });
+  // Verify persisted in SQLite
+  const dbRow = getDb().prepare("SELECT * FROM policy_rules WHERE id = ?").get(custom.id) as any;
+  assert.ok(dbRow);
+  assert.equal(dbRow.name, "Block drop table");
+  assert.equal(dbRow.enabled, 1);
+
+  updatePolicyRule(custom.id, { enabled: false, name: "Block drop table updated" });
   assert.equal(getPolicyRule(custom.id)?.enabled, false);
+
+  const updatedDbRow = getDb().prepare("SELECT * FROM policy_rules WHERE id = ?").get(custom.id) as any;
+  assert.equal(updatedDbRow.enabled, 0);
+  assert.equal(updatedDbRow.name, "Block drop table updated");
 
   const deleted = deletePolicyRule(custom.id);
   assert.equal(deleted, true);
   assert.equal(getPolicyRule(custom.id), undefined);
+
+  const deletedDbRow = getDb().prepare("SELECT * FROM policy_rules WHERE id = ?").get(custom.id);
+  assert.equal(deletedDbRow, undefined);
 });
 
 test("updatePolicyRule validates regex when property is present, including empty string", () => {

@@ -22,8 +22,8 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    port: 3000,
-    strictPort: false, // Will find next available port if 3000 is busy
+    port: 5173,
+    strictPort: false,
     host: true,
     allowedHosts: [
       "localhost",
@@ -35,27 +35,27 @@ export default defineConfig({
     },
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:3001",
+        target: "http://127.0.0.1:3000",
         changeOrigin: true,
       },
       "/converse": {
-        target: "http://127.0.0.1:3001",
+        target: "http://127.0.0.1:3000",
         changeOrigin: true,
       },
       "/health": {
-        target: "http://127.0.0.1:3001",
+        target: "http://127.0.0.1:3000",
         changeOrigin: true,
       },
       "/incidents": {
-        target: "http://127.0.0.1:3001",
+        target: "http://127.0.0.1:3000",
         changeOrigin: true,
       },
       "/alerts": {
-        target: "http://127.0.0.1:3001",
+        target: "http://127.0.0.1:3000",
         changeOrigin: true,
       },
       "/ws": {
-        target: "ws://127.0.0.1:3001",
+        target: "ws://127.0.0.1:3000",
         ws: true,
       },
     },

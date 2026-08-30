@@ -283,7 +283,7 @@ export interface Incident {
 // In-memory store for PR #3; a durable store is a later PR.
 const incidents = new Map<string, Incident>();
 
-const TERMINAL_STATUSES: ReadonlySet<IncidentStatus> = new Set([
+export const TERMINAL_STATUSES: ReadonlySet<IncidentStatus> = new Set([
   "completed",
   "failed",
   "rejected",
