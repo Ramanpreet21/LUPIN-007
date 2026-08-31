@@ -1,6 +1,39 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+
+# Environment
 .env
-.serena/
-*.log
+.env.local
+.env.*.local
+
+# Database
 data/
+
+# Logs
+*.log
+
+# TypeScript
+*.tsbuildinfo
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# AI/Tool directories
+.serena/
+.claude/
+.qodo/
+.superpowers/
+.manus-logs/
+
+# Test scratch
+test-apps/

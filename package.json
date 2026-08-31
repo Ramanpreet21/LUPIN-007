@@ -1,7 +1,7 @@
 {
-  "name": "007",
+  "name": "lupin-007",
   "version": "1.0.0",
-  "description": "Incident Command Deck - local control plane",
+  "description": "Incident Command Deck - autonomous incident forensics, multi-runtime sandbox twins & blast-radius governance",
   "main": "dist/index.js",
   "bin": {
     "incident-agent": "dist/index.js"
@@ -18,19 +18,25 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Ramanpreet21/007.git"
+    "url": "git+https://github.com/Ramanpreet21/LUPIN-007.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "incident-response",
+    "sandbox",
+    "policy-engine",
+    "trueforge",
+    "blast-radius"
+  ],
+  "author": "Ramanpreet21",
+  "license": "MIT",
   "engines": {
     "node": ">=22"
   },
   "type": "commonjs",
   "bugs": {
-    "url": "https://github.com/Ramanpreet21/007/issues"
+    "url": "https://github.com/Ramanpreet21/LUPIN-007/issues"
   },
-  "homepage": "https://github.com/Ramanpreet21/007#readme",
+  "homepage": "https://github.com/Ramanpreet21/LUPIN-007#readme",
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
     "@types/express": "^5.0.6",
