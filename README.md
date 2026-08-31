@@ -1,125 +1,67 @@
-# LUPIN-007: Incident Command Deck
+<div align="center">
 
-> **Autonomous Incident Forensics, Multi-Runtime Sandbox Twins & Blast-Radius Governance for Production Infrastructure**
+# 🕵️‍♂️ 007 — Incident Command Deck (LUPIN)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Node: >=20.0.0](https://img.shields.io/badge/Node->=20.0.0-green.svg)](https://nodejs.org)
-[![TypeScript: 5.x](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org)
-[![React: 19](https://img.shields.io/badge/React-19-cyan.svg)](https://react.dev)
-[![Electron: 35](https://img.shields.io/badge/Electron-35-blue.svg)](https://www.electronjs.org)
+**Deterministic Autonomous Incident Response & Safe SRE Control Plane**
+
+[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](LICENSE)
+[![Node: >=22](https://img.shields.io/badge/Node.js->=22.0.0-green.svg)](package.json)
+[![Architecture: TrueForge](https://img.shields.io/badge/Orchestrator-TrueForge-orange.svg)](https://www.truefoundry.com/)
+[![Safety: AST Verified](https://img.shields.io/badge/Safety-AST_Sandboxed-red.svg)](docs/safety-and-policy.md)
+
+</div>
 
 ---
 
 ## Overview
 
-**LUPIN-007 (Incident Command Deck)** is an autonomous AI incident response and infrastructure reliability system. When production alerts fire from **Prometheus AlertManager** or **PagerDuty**, LUPIN captures the affected host's live state (processes, open sockets, systemd services, filesystem diffs), replicates the issue inside an isolated **Sandbox Twin**, autonomously conducts diagnostic experiments, and verifies proposed remediation commands through an **AST Blast-Radius Policy Engine** before requesting Human-in-the-Loop approval.
-
-```mermaid
-flowchart LR
-    Alerts[Prometheus / PagerDuty] --> Ingest[Alert Intake & Normalizer]
-    Ingest --> ControlPlane[LUPIN Control Plane]
-    ControlPlane --> TrueForge[TrueForge Agent Orchestrator]
-    TrueForge --> Sandbox[Multi-Runtime Sandbox Twin\nDaytona / Docker / Podman]
-    Sandbox --> Policy[AST Blast-Radius Engine\nScope & Policy Rules]
-    Policy --> HITL[Human-in-the-Loop Approval Gate]
-    HITL --> Target[Target Fleet Host / SSH]
-    ControlPlane --> UI[Liquid Glass Operator Console\nWeb & Electron Desktop]
-```
+**007 (Incident Command Deck)** is an autonomous SRE control plane and incident responder. When production alerts fire, the system captures live target state, performs root-cause analysis via an LLM agent, isolates remediation scripts in ephemeral sandboxes, and verifies every proposed shell command through Abstract Syntax Tree (AST) policy checks before requiring explicit human approval.
 
 ---
 
-## Core Architecture & Subsystems
+## Key Features
 
-### 1. Incident Plane & Alert Normalization
-- **Multi-Source Ingestion (`/alerts`)**: Normalizes payloads from Prometheus AlertManager, PagerDuty v2/v3 webhooks, and raw JSON alerts.
-- **Autonomous Reasoning Stream**: Connects to the **TrueForge Agent Engine** using configurable models (`google-gemini/gemini-2.5-flash`, `gemini-2.5-pro`, `anthropic/claude-3-5-sonnet`, `openai/gpt-4o`, or local LLMs).
-- **Incident State Machine**: Manages lifecycles across `triaged` → `diagnosing` → `awaiting_approval` → `approved` → `resolved` / `failed` / `cancelled`.
-- **Durable SQLite Persistence (`data/incident-deck.db`)**: Write-Ahead Logging (WAL) mode storing `incidents`, `sessions`, `messages`, `fleet_hosts`, `settings`, and `policy_rules` with foreign-key cascade enforcement.
-
-### 2. Multi-Runtime Sandbox Subsystem
-Auto-discovers, tests, and provisions ephemeral sandbox twins for safe command execution and chaos reproduction:
-- **Daytona Cloud & Dedicated**: Remote containerized sandbox workspaces via TrueForge Sandbox API.
-- **Docker Daemon**: Local container runtime via `/var/run/docker.sock`.
-- **Podman**: Rootless/rootful container daemon via `/run/podman/podman.sock` or `XDG_RUNTIME_DIR`.
-- **Isolated Process Runner**: Host-level sandboxed execution with scrubbed environment variables and process scoping.
-
-### 3. AST Blast-Radius & Policy Engine
-- **Quote-Aware Shell AST Parser**: Tokenizes and decomposes complex shell commands (subshells, pipes, `;`, `&&`, `||`).
-- **Privilege Wrapper Unwrapping**: Normalizes execution across `sudo`, `doas`, `sh -c`, `bash -c`, `zsh -c`, and environment assignments.
-- **Side-Effect Extraction**: Extracts impacted file paths, network ports, listening sockets, and systemd units.
-- **Dynamic Policy Simulation**: Evaluates proposed commands against configurable regex safety rules, scoring risk (`low`, `medium`, `high`, `critical`) and generating instant safety badges (`destructive`, `network`, `privilege`).
-
-### 4. Automated Demo Cluster & Prometheus Pipeline
-- **Orchestrated Docker Compose Stack**: Spins up a 4-node simulated microservices topology:
-  - `tf-server`: Gateway server with SSH access (`:2222`)
-  - `client1`: Redis / Cache node with node-exporter sidecar
-  - `client2`: Nginx & MySQL database node with node-exporter sidecar
-  - `client3`: API backend worker node with node-exporter sidecar
-  - `prometheus` & `alertmanager`: Real-time scraping and webhook delivery (`:9090`, `:9093`)
-- **8 Pre-configured Incident Scenarios**: `HighCPUUsage`, `DiskSpaceCritical`, `NginxDown`, `MySQLDown`, `RedisDown`, `HighMemoryUsage`, `LoadAverageHigh`, `SSLCertExpiring`.
-
-### 5. Operator Console (Liquid Glass UI & Electron Desktop)
-- **Luminous Obsidian Glass UI**: High-density operational interface built with React 19, Tailwind CSS, Lucide icons, and Framer Motion.
-- **Live Terminal (`LiveTerminal.tsx`)**: Real-time xterm.js terminal streaming agent command execution and SSH probe sessions.
-- **Interactive Incident Deck**: Side-by-side diagnostic logs, proposed script diffs, safety badges, and 1-click Approval/Reject gates.
-- **Topology Map & Blast Radius Cards**: Live visual maps of fleet nodes and dependency trees.
-- **Desktop Packaging**: Standalone Electron app with built-in subprocess lifecycle manager for control plane and TrueForge daemons.
+- **Multi-Source Ingestion**: Normalizes alerts from Prometheus AlertManager, PagerDuty (v2/v3), and direct JSON webhooks.
+- **Pre-Diagnostic Telemetry Capture**: Collects live process trees, listening sockets, and service states (`ps aux --forest`, `ss -tulnp`, `systemctl status`) before starting the session.
+- **Local Read-Only MCP Provider**: Embeds a JSON-RPC Model Context Protocol (MCP) server exposing safe inspection tools (`system_snapshot`, `journal_logs`, `file_read`, etc.).
+- **Deterministic AST Safety Guardrails**: Quotes and tokenizes shell commands, extracts nested subshells (`$(...)`), matches regex security rules, and calculates blast-radius impact (affected files, ports, services).
+- **Three Enforcement Modes**:
+  - `STRICT_GATED`: Default human-in-the-loop approval gate.
+  - `AUTONOMOUS`: Evaluates safety rules and auto-approves safe actions.
+  - `DRY_RUN`: Simulates and logs actions, auto-denying real execution.
+- **Multi-Runtime Sandboxing**: Supports isolated local subprocesses, Docker, Podman, and Daytona cloud workspaces.
+- **Embedded Persistence**: Lightweight SQLite backend (WAL mode) tracking incidents, policy rules, sessions, and fleet hosts.
+- **Real-Time WebSocket Stream**: Emits live `agent_thinking`, `pending_approval`, and `execution_complete` events to the UI.
 
 ---
 
-## Repository Structure
+## Architecture Diagram
 
 ```
-├── alert_rules.yml            # Prometheus alert rules for 8 demo incident presets
-├── docker-compose.yml         # 4-node simulated demo cluster + Prometheus stack
-├── prometheus.yml             # Prometheus scrape configuration & alertmanager target
-├── install.sh                 # All-in-one terminal installer for Linux/macOS
-├── package.json               # Backend & CLI build and test scripts
-│
-├── src/                       # Backend Control Plane (Node.js + TypeScript + Express)
-│   ├── index.ts               # CLI & production server entrypoint
-│   ├── server.ts              # Express HTTP application & WebSocket /ws server
-│   ├── db.ts                  # SQLite WAL database initialization & repository schema
-│   ├── incidents.ts           # In-memory & SQLite incident state machine
-│   ├── incident-plane.ts      # Alert routing, TrueForge reasoning & approval gate
-│   ├── command-scope.ts       # AST parser, wrapper unwrapping & risk classifier
-│   ├── policy.ts              # Regex policy engine & simulation evaluator
-│   ├── capture.ts             # Host telemetry & socket probe capture
-│   │
-│   ├── demo/                  # Automated Demo Cluster Orchestrator
-│   │   ├── compose-orchestrator.ts
-│   │   └── compose-orchestrator.test.ts
-│   │
-│   ├── routes/                # REST API Route Controllers
-│   │   ├── demo.ts            # /api/demo/start, /api/demo/stop, /api/demo/trigger
-│   │   ├── fleet.ts           # /api/fleet/hosts, /api/fleet/probe
-│   │   ├── models.ts          # /api/models
-│   │   ├── policy.ts          # /api/policy/rules, /api/policy/simulate
-│   │   ├── sandbox.ts         # /api/sandboxes/probes, /api/settings/sandbox
-│   │   ├── sessions.ts        # /api/sessions, /api/sessions/:id/messages
-│   │   └── settings.ts        # /api/settings
-│   │
-│   └── sandboxes/             # Multi-Runtime Sandbox Subsystem
-│       ├── manager.ts         # Sandbox runtime auto-discovery & router
-│       ├── types.ts           # Sandbox interfaces and types
-│       ├── container-runners.ts # Docker & Podman runners
-│       ├── daytona-runner.ts  # Daytona cloud/dedicated client
-│       └── socket-probe.ts    # Socket probing & daemon usability checks
-│
-├── dashboard/                 # Frontend Operator Console (Vite + React 19 + TypeScript)
-│   ├── package.json           # Dashboard frontend dependencies and scripts
-│   ├── electron/              # Electron Desktop Application
-│   │   ├── main.cjs           # Desktop window supervisor & daemon orchestrator
-│   │   ├── preload.cjs        # Secure IPC bridge
-│   │   └── electron-config.test.ts
-│   └── client/                # React Single Page App
-│       ├── src/components/    # IncidentDeck, LiveTerminal, FirstRunSetup, TopBar
-│       ├── src/hooks/         # useControlPlane, useFleetManager, usePolicyEngine
-│       ├── src/pages/Home.tsx # Main Command Deck viewport
-│       └── src/types/         # Domain TypeScript models
-│
-└── docs/                      # Technical Architecture Specifications
-    └── superpowers/specs/     # SDD specs, packaging guides & incident loop designs
+                 POST /alerts
+[Monitoring] ───────────────────► [ Alert Normalizer ]
+(Prometheus/PD)                          │
+                                         ▼
+                                [ Incident SQLite DB ]
+                                         │
+                                         ▼
+                              [ Host State Capture ] ── (ps / ss / systemctl)
+                                         │
+                                         ▼
+                             [ TrueForge Session Stream ]
+                                   │            ▲
+         (local read-only tools)   ▼            │ (JSON-RPC)
+                            [ Local MCP Server ]
+                                   │
+                                   ▼
+                         [ AST Policy Evaluator ]
+                                   │
+                       ┌───────────┴───────────┐
+                       ▼                       ▼
+            [ Gated: pending_approval ]   [ Safety Badges & Scope ]
+                       │
+                       ▼ (POST /api/approvals)
+              [ Operator Decision ]
 ```
 
 ---
@@ -127,98 +69,82 @@ Auto-discovers, tests, and provisions ephemeral sandbox twins for safe command e
 ## Quick Start
 
 ### Prerequisites
-- **Node.js**: `v20.0.0` or higher
-- **pnpm**: `v9.x` or higher
-- **Container Engine** *(optional, for local demo cluster)*: Docker or Podman
 
-### Option A: One-Line Installer (Linux / macOS)
+- **Node.js**: `>=22.0.0`
+- **Container Engine** *(optional, for local demo lab)*: Docker / Podman
+- **TrueForge**: Local harness server running (default: `http://localhost:8765`)
+
+### 1. Setup & Installation
 
 ```bash
-git clone https://github.com/Ramanpreet21/LUPIN-007.git
-cd LUPIN-007
-chmod +x install.sh
-./install.sh
+git clone https://github.com/Ramanpreet21/007.git
+cd 007
+npm install
+cp .env.example .env
 ```
 
-### Option B: Manual Setup
+### 2. Build & Launch Backend
 
-1. **Install Root & Dashboard Dependencies**:
-   ```bash
-   npm install
-   cd dashboard && pnpm install && cd ..
-   ```
+```bash
+# Development mode (Hot Reload)
+npm run dev
 
-2. **Build Backend & Frontend**:
-   ```bash
-   npm run build
-   cd dashboard && pnpm run build && cd ..
-   ```
+# Or Production build & run
+npm run build
+npm start
+```
 
-3. **Start the Control Plane**:
-   ```bash
-   PORT=3001 npm run start
-   ```
+### 3. Launch Dashboard UI (Optional)
 
-4. **Launch Developer Mode (Concurrent Backend + Frontend Hot Reload)**:
-   ```bash
-   # Terminal 1: Backend Control Plane
-   npm run dev
-
-   # Terminal 2: Dashboard Frontend
-   cd dashboard && pnpm run dev
-   ```
-
-5. **Launch Electron Desktop App**:
-   ```bash
-   cd dashboard && pnpm run electron:dev
-   ```
+```bash
+cd dashboard
+pnpm install
+pnpm run dev
+```
 
 ---
 
-## API Reference
+## In-Depth Documentation (`docs/`)
 
-| Endpoint | Method | Description |
-|---|---|---|
-| `/health` | `GET` | System health, TrueForge readiness, active incident counts |
-| `/alerts` | `POST` | Ingest webhook from AlertManager, PagerDuty, or custom alert |
-| `/incidents` | `GET` | List incidents filtered by status with chronological ordering |
-| `/incidents/:id` | `GET` | Get detailed incident metadata, telemetry, and execution logs |
-| `/api/approvals` | `POST` | Approve (`action: "approve"`) or deny (`action: "deny"`) pending command |
-| `/api/emergency-stop`| `POST` | Instantly abort all in-flight diagnosing and approved sessions |
-| `/api/models` | `GET` | Retrieve available LLM models and active model selection |
-| `/api/fleet/hosts` | `GET` / `POST` | List and register fleet target machines |
-| `/api/fleet/probe` | `POST` | Execute live TCP/SSH connectivity probe on target host |
-| `/api/sandboxes/probes` | `GET` | Auto-discover and probe all installed sandbox runtimes |
-| `/api/policy/rules` | `GET` / `POST` | List and create regex-based AST execution policy rules |
-| `/api/policy/simulate` | `POST` | Simulate a proposed command string against policy rules |
-| `/api/settings` | `GET` / `PUT` | Read and configure operator preferences and model keys |
-| `/api/demo/start` | `POST` | Provision local Docker Compose demo cluster |
-| `/api/demo/trigger` | `POST` | Trigger one of 8 Prometheus alert presets into the pipeline |
-| `/api/demo/stop` | `POST` | Tear down demo cluster and reset database state |
-| `/ws` | `WebSocket` | Real-time event stream (`incident_created`, `pending_approval`, `stream_token`) |
+- 📐 **[Architecture Overview](docs/architecture.md)**: Deep dive into topology, sequence diagrams, and module responsibilities.
+- 🚀 **[Getting Started Guide](docs/getting-started.md)**: Step-by-step tutorial using the included Docker Compose cluster.
+- 📖 **[API Reference](docs/api-reference.md)**: Exhaustive REST endpoints, WebSocket schemas, and JSON-RPC tool specifications.
+- 🛡️ **[Safety & Policy Governance](docs/safety-and-policy.md)**: AST parsing mechanics, risk scoring, and rule configurations.
+- 📋 **[Incident Response Runbook](docs/runbooks/incident-response.md)**: Emergency operations, triage, and approval gate workflows.
+- 🏛️ **[ADR 0001: Safety & MCP Architecture](docs/adr/0001-two-tier-safety-and-local-mcp.md)**: Architectural decisions and trade-offs.
+
+---
+
+## Environment Variables
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `PORT` | number | `3000` | HTTP and WebSocket server port |
+| `HOST` | string | `127.0.0.1` | Network bind interface (`0.0.0.0` for all) |
+| `LOG_LEVEL` | string | `info` | Logging level (`debug`, `info`, `warn`, `error`) |
+| `TRUEFORGE_BASE_URL` | string | `http://localhost:8765` | Base URL of TrueForge harness server |
+| `TRUEFORGE_TOKEN` | string | `""` | Optional bearer token for TrueForge |
+| `TRUEFORGE_MODEL` | string | `anthropic/claude-sonnet-5` | Model identifier (`provider/model`) |
+| `CONTROL_PLANE_URL` | string | `""` | Externally reachable URL for MCP callbacks |
+| `CONTROL_PLANE_API_TOKEN` | string | `""` | Bearer token for mutating settings APIs |
 
 ---
 
 ## Testing & Quality Assurance
 
-Run the comprehensive test suite across backend services, sandboxes, policy parser, and desktop packaging:
-
 ```bash
-# Run all backend unit and integration tests (158 tests)
+# Run backend test suite
 npm test
 
-# Run frontend typecheck
-cd dashboard && pnpm run check
+# Type-check TypeScript code
+npm run typecheck
 
-# Run Electron desktop configuration tests
-cd dashboard && npx vitest run --dir electron
-
-# Build full production artifacts
-npm run build && cd dashboard && pnpm run build
+# Run end-to-end smoke tests
+npm run smoke
 ```
 
 ---
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+ISC
